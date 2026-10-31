@@ -1,0 +1,110 @@
+# Local Flatpak build (not Flathub: cargo/npm fetch dependencies over the network during the build).
+#
+#   flatpak install --user flathub org.flatpak.Builder org.gnome.Platform//49 org.gnome.Sdk//49 \
+#       org.freedesktop.Sdk.Extension.rust-stable//25.08 org.freedesktop.Sdk.Extension.node22//25.08
+#   cd packaging/flatpak
+#   flatpak run org.flatpak.Builder --user --install --force-clean build io.github.tonearm.Tonearm.yml
+#
+# The tray icon needs libayatana-appindicator, which the GNOME runtime doesn't ship; inside the
+# Flatpak Tonearm runs without a tray icon (MPRIS, media keys and notifications still work).
+id: io.github.tonearm.Tonearm
+runtime: org.gnome.Platform
+runtime-version: "49"
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node22
+command: tonearm
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=dri
+  - --talk-name=org.freedesktop.Notifications
+  - --own-name=org.mpris.MediaPlayer2.tonearm
+  - --own-name=org.mpris.MediaPlayer2.tonearm.*
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/doc
+  - "*.a"
+
+modules:
+  - name: libass
+    buildsystem: meson
+    config-opts: [-Dtest=disabled, -Dprofile=disabled, -Dfontconfig=enabled]
+    sources:
+      - type: git
+        url: https://github.com/libass/libass.git
+        tag: 0.17.3
+
+  - name: libplacebo
+    buildsystem: meson
+    config-opts:
+      - -Dvulkan=disabled
+      - -Dopengl=disabled
+      - -Dd3d11=disabled
+      - -Dglslang=disabled
+      - -Dshaderc=disabled
+      - -Dlcms=disabled
+      - -Ddemos=false
+      - -Dtests=false
+    sources:
+      - type: git
+        url: https://code.videolan.org/videolan/libplacebo.git
+        tag: v7.349.0
+
+  # Audio-only libmpv: no player binary, no Lua/JS, no video outputs.
+  - name: mpv
+    buildsystem: meson
+    config-opts:
+      - -Dlibmpv=true
+      - -Dcplayer=false
+      - -Dlua=disabled
+      - -Djavascript=disabled
+      - -Dmanpage-build=disabled
+      - -Dhtml-build=disabled
+      - -Dpdf-build=disabled
+      - -Dvulkan=disabled
+      - -Dgl=disabled
+      - -Dwayland=disabled
+      - -Dx11=disabled
+      - -Ddrm=disabled
+      - -Dlibarchive=disabled
+      - -Dlibbluray=disabled
+      - -Ddvdnav=disabled
+      - -Dcdda=disabled
+      - -Duchardet=disabled
+      - -Drubberband=disabled
+      - -Dzimg=disabled
+      - -Dpipewire=enabled
+      - -Dpulse=enabled
+    sources:
+      - type: git
+        url: https://github.com/mpv-player/mpv.git
+        tag: v0.40.0
+
+  - name: tonearm
+    buildsystem: simple
+    build-options:
+      build-args: [--share=network]
+      env:
+        CARGO_HOME: /run/build/tonearm/cargo
+        npm_config_cache: /run/build/tonearm/npm-cache
+    build-commands:
+      - npm ci
+      - npx tauri build --no-bundle
+      - install -Dm755 src-tauri/target/release/tonearm /app/bin/tonearm
+      - install -Dm644 packaging/flatpak/io.github.tonearm.Tonearm.desktop /app/share/applications/io.github.tonearm.Tonearm.desktop
+      - install -Dm644 packaging/flatpak/io.github.tonearm.Tonearm.metainfo.xml /app/share/metainfo/io.github.tonearm.Tonearm.metainfo.xml
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/io.github.tonearm.Tonearm.png
+      - install -Dm644 src-tauri/icons/128x128@2x.png /app/share/icons/hicolor/256x256/apps/io.github.tonearm.Tonearm.png
+      - install -Dm644 icon.svg /app/share/icons/hicolor/scalable/apps/io.github.tonearm.Tonearm.svg
+    sources:
+      - type: dir
+        path: ../..
+        skip: [node_modules, dist, src-tauri/target, src-tauri/gen, packaging/flatpak/build, packaging/flatpak/.flatpak-builder]

@@ -1,0 +1,549 @@
+// Plex API client: plex.tv account/PIN auth, server discovery and the
+// music-library endpoints. All requests go through the Tauri HTTP plugin so
+// CORS and self-signed LAN setups don't get in the way.
+import { fetch } from "@tauri-apps/plugin-http";
+
+export const PRODUCT = "Tonearm";
+export const VERSION = "0.1.0";
+
+export function clientId(): string {
+  let id = localStorage.getItem("tonearm.clientId");
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem("tonearm.clientId", id);
+  }
+  return id;
+}
+
+export function plexHeaders(token?: string): Record<string, string> {
+  const h: Record<string, string> = {
+    Accept: "application/json",
+    "X-Plex-Client-Identifier": clientId(),
+    "X-Plex-Product": PRODUCT,
+    "X-Plex-Version": VERSION,
+    "X-Plex-Platform": "Linux",
+    "X-Plex-Device": "Linux",
+    "X-Plex-Device-Name": PRODUCT,
+    "X-Plex-Provides": "player",
+  };
+  if (token) h["X-Plex-Token"] = token;
+  return h;
+}
+
+// ---- plex.tv ---------------------------------------------------------------
+
+async function plexTv<T>(path: string, opts: { method?: string; token?: string } = {}): Promise<T> {
+  const r = await fetch("https://plex.tv" + path, {
+    method: opts.method ?? "GET",
+    headers: plexHeaders(opts.token),
+  });
+  if (!r.ok) throw new Error(`plex.tv returned ${r.status}`);
+  return r.json();
+}
+
+export const createPin = () => plexTv<{ id: number; code: string }>("/api/v2/pins?strong=true", { method: "POST" });
+
+export function authUrl(code: string) {
+  const p = new URLSearchParams({
+    clientID: clientId(),
+    code,
+    "context[device][product]": PRODUCT,
+  });
+  return `https://app.plex.tv/auth#?${p}`;
+}
+
+export async function checkPin(id: number): Promise<string | null> {
+  const r = await plexTv<{ authToken: string | null }>(`/api/v2/pins/${id}`);
+  return r.authToken;
+}
+
+export interface PlexUser {
+  uuid?: string;
+  username: string;
+  title: string;
+  thumb?: string;
+}
+export const getUser = (token: string) => plexTv<PlexUser>("/api/v2/user", { token });
+
+export interface Connection {
+  uri: string;
+  local: boolean;
+  relay: boolean;
+  protocol: string;
+}
+export interface Resource {
+  name: string;
+  clientIdentifier: string;
+  accessToken: string;
+  provides: string;
+  owned: boolean;
+  presence: boolean;
+  connections: Connection[];
+}
+
+export async function getServers(token: string): Promise<Resource[]> {
+  const rs = await plexTv<Resource[]>("/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1", { token });
+  return rs.filter((r) => r.provides.split(",").includes("server"));
+}
+
+/** Pick the best reachable connection: LAN first, then direct remote, then relay. */
+export async function findConnection(res: Resource): Promise<Connection> {
+  const tiers = [
+    res.connections.filter((c) => c.local && !c.relay),
+    res.connections.filter((c) => !c.local && !c.relay),
+    res.connections.filter((c) => c.relay),
+  ];
+  for (const tier of tiers) {
+    if (!tier.length) continue;
+    try {
+      return await Promise.any(
+        tier.map(async (c) => {
+          const r = await fetch(c.uri + "/identity", {
+            headers: plexHeaders(res.accessToken),
+            connectTimeout: 4000,
+            signal: AbortSignal.timeout(6000),
+          });
+          if (!r.ok) throw new Error(String(r.status));
+          return c;
+        }),
+      );
+    } catch {
+      /* try next tier */
+    }
+  }
+  throw new Error(`Couldn't reach ${res.name} on any of its addresses`);
+}
+
+// ---- library model ---------------------------------------------------------
+
+export interface Track {
+  ratingKey: string;
+  title: string;
+  artist: string;
+  artistKey?: string;
+  album: string;
+  albumKey?: string;
+  thumb?: string;
+  duration: number; // ms
+  partKey?: string;
+  index?: number;
+  disc?: number;
+  year?: number;
+  userRating?: number;
+  codec?: string;
+  bitrate?: number;
+  playlistItemID?: number;
+  /** Where playback stopped last time, on any Plex player (ms). */
+  viewOffset?: number;
+  lastViewedAt?: number; // unix seconds
+}
+
+export interface Album {
+  ratingKey: string;
+  title: string;
+  artist: string;
+  artistKey?: string;
+  thumb?: string;
+  year?: number;
+  addedAt?: number;
+  userRating?: number;
+  summary?: string;
+  genres?: string[];
+  studio?: string;
+  leafCount?: number;
+  format?: string;
+}
+
+export interface Artist {
+  ratingKey: string;
+  title: string;
+  thumb?: string;
+  art?: string;
+  summary?: string;
+  genres?: string[];
+  similar?: string[];
+}
+
+export interface Playlist {
+  ratingKey: string;
+  title: string;
+  leafCount: number;
+  duration: number;
+  smart: boolean;
+  thumb?: string;
+}
+
+export interface Hub {
+  title: string;
+  type: string;
+  hubIdentifier: string;
+  items: (Album | Artist | Track | Playlist)[];
+  itemType: string;
+}
+
+const tags = (xs?: { tag: string }[]) => xs?.map((x) => x.tag);
+
+export function toTrack(m: any): Track {
+  const media = m.Media?.[0];
+  const part = media?.Part?.[0];
+  return {
+    ratingKey: String(m.ratingKey),
+    title: m.title,
+    artist: m.originalTitle || m.grandparentTitle || "Unknown artist",
+    artistKey: m.grandparentRatingKey ? String(m.grandparentRatingKey) : undefined,
+    album: m.parentTitle || "",
+    albumKey: m.parentRatingKey ? String(m.parentRatingKey) : undefined,
+    thumb: m.parentThumb || m.thumb || m.grandparentThumb,
+    duration: m.duration ?? media?.duration ?? 0,
+    partKey: part?.key,
+    index: m.index,
+    disc: m.parentIndex,
+    year: m.parentYear ?? m.year,
+    userRating: m.userRating,
+    codec: media?.audioCodec,
+    bitrate: media?.bitrate,
+    playlistItemID: m.playlistItemID,
+    viewOffset: m.viewOffset,
+    lastViewedAt: m.lastViewedAt,
+  };
+}
+
+export function toAlbum(m: any): Album {
+  const format = m.Subformat?.[0]?.tag ?? m.Format?.[0]?.tag;
+  return {
+    ratingKey: String(m.ratingKey),
+    title: m.title,
+    artist: m.parentTitle || "Unknown artist",
+    artistKey: m.parentRatingKey ? String(m.parentRatingKey) : undefined,
+    thumb: m.thumb,
+    year: m.year,
+    addedAt: m.addedAt,
+    userRating: m.userRating,
+    summary: m.summary,
+    genres: tags(m.Genre),
+    studio: m.studio,
+    leafCount: m.leafCount,
+    format,
+  };
+}
+
+export function toArtist(m: any): Artist {
+  return {
+    ratingKey: String(m.ratingKey),
+    title: m.title,
+    thumb: m.thumb,
+    art: m.art,
+    summary: m.summary,
+    genres: tags(m.Genre),
+    similar: tags(m.Similar),
+  };
+}
+
+export function toPlaylist(m: any): Playlist {
+  return {
+    ratingKey: String(m.ratingKey),
+    title: m.title,
+    leafCount: m.leafCount ?? 0,
+    duration: m.duration ?? 0,
+    smart: !!m.smart,
+    thumb: m.composite || m.thumb,
+  };
+}
+
+export function convert(m: any): Album | Artist | Track | Playlist {
+  switch (m.type) {
+    case "track":
+      return toTrack(m);
+    case "album":
+      return toAlbum(m);
+    case "artist":
+      return toArtist(m);
+    case "playlist":
+      return toPlaylist(m);
+    default:
+      return toAlbum(m);
+  }
+}
+
+// ---- server ----------------------------------------------------------------
+
+export interface ServerInfo {
+  uri: string;
+  token: string;
+  machineId: string;
+  name: string;
+  local: boolean;
+}
+
+type Params = Record<string, string | number | undefined>;
+
+export class Server {
+  constructor(public info: ServerInfo) {}
+
+  url(path: string, params: Params = {}) {
+    const u = new URL(this.info.uri + path);
+    for (const [k, v] of Object.entries(params)) if (v !== undefined) u.searchParams.set(k, String(v));
+    return u.toString();
+  }
+
+  async request<T = any>(path: string, params: Params = {}, method = "GET"): Promise<T> {
+    const r = await fetch(this.url(path, params), { method, headers: plexHeaders(this.info.token) });
+    if (!r.ok) throw new Error(`Plex returned ${r.status} for ${path}`);
+    const text = await r.text();
+    return text ? JSON.parse(text) : ({} as T);
+  }
+
+  async container(path: string, params: Params = {}) {
+    const j = await this.request(path, params);
+    return j.MediaContainer ?? {};
+  }
+
+  imageUrl(thumb: string | undefined, size = 300) {
+    if (!thumb) return undefined;
+    return this.url("/photo/:/transcode", {
+      width: size,
+      height: size,
+      minSize: 1,
+      upscale: 1,
+      url: thumb,
+      "X-Plex-Token": this.info.token,
+    });
+  }
+
+  streamUrl(t: Track, transcodeKbps: number | null, session: string) {
+    if (!transcodeKbps && t.partKey) {
+      return this.url(t.partKey, { "X-Plex-Token": this.info.token });
+    }
+    return this.url("/music/:/transcode/universal/start.mp3", {
+      path: `/library/metadata/${t.ratingKey}`,
+      mediaIndex: 0,
+      partIndex: 0,
+      protocol: "http",
+      directPlay: 0,
+      directStream: 0,
+      hasMDE: 1,
+      maxAudioBitrate: transcodeKbps ?? 320,
+      musicBitrate: transcodeKbps ?? 320,
+      session,
+      "X-Plex-Session-Identifier": session,
+      "X-Plex-Client-Identifier": clientId(),
+      "X-Plex-Product": PRODUCT,
+      "X-Plex-Platform": "Chrome",
+      "X-Plex-Token": this.info.token,
+    });
+  }
+
+  // ---- library ----
+
+  async musicSections(): Promise<{ key: string; title: string }[]> {
+    const c = await this.container("/library/sections");
+    return (c.Directory ?? []).filter((d: any) => d.type === "artist").map((d: any) => ({ key: String(d.key), title: d.title }));
+  }
+
+  async page(path: string, params: Params, start: number, size: number) {
+    const c = await this.container(path, { ...params, "X-Plex-Container-Start": start, "X-Plex-Container-Size": size });
+    return { items: (c.Metadata ?? []) as any[], total: (c.totalSize ?? c.size ?? 0) as number };
+  }
+
+  async artists(section: string, sort: string, start: number, size: number) {
+    const p = await this.page(`/library/sections/${section}/all`, { type: 8, sort }, start, size);
+    return { items: p.items.map(toArtist), total: p.total };
+  }
+
+  async albums(section: string, opts: { sort: string; genre?: string; unplayed?: boolean }, start: number, size: number) {
+    const p = await this.page(
+      `/library/sections/${section}/all`,
+      { type: 9, sort: opts.sort, genre: opts.genre, "album.viewCount": opts.unplayed ? 0 : undefined },
+      start,
+      size,
+    );
+    return { items: p.items.map(toAlbum), total: p.total };
+  }
+
+  async genres(section: string): Promise<{ key: string; title: string }[]> {
+    const c = await this.container(`/library/sections/${section}/genre`, { type: 9 });
+    return (c.Directory ?? []).map((d: any) => ({ key: String(d.key), title: d.title }));
+  }
+
+  async hubs(section: string): Promise<Hub[]> {
+    const c = await this.container(`/hubs/sections/${section}`, { count: 16, includeLibraryPlaylists: 1 });
+    return (c.Hub ?? [])
+      .filter((h: any) => h.Metadata?.length)
+      .map((h: any) => ({
+        title: h.title,
+        type: h.type,
+        hubIdentifier: h.hubIdentifier,
+        itemType: h.Metadata[0]?.type ?? h.type,
+        items: h.Metadata.map(convert),
+      }));
+  }
+
+  async randomAlbums(section: string, count: number) {
+    return (await this.albums(section, { sort: "random" }, 0, count)).items;
+  }
+
+  async randomTracks(section: string, count: number, filter: Params = {}) {
+    const p = await this.page(`/library/sections/${section}/all`, { type: 10, sort: "random", ...filter }, 0, count);
+    return p.items.map(toTrack);
+  }
+
+  async metadata(key: string) {
+    const c = await this.container(`/library/metadata/${key}`);
+    return c.Metadata?.[0];
+  }
+
+  async artist(key: string) {
+    return toArtist(await this.metadata(key));
+  }
+
+  async artistAlbums(key: string) {
+    const c = await this.container(`/library/metadata/${key}/children`, { excludeAllLeaves: 1 });
+    return (c.Metadata ?? []).map(toAlbum) as Album[];
+  }
+
+  async artistTracks(key: string) {
+    const c = await this.container(`/library/metadata/${key}/allLeaves`);
+    return (c.Metadata ?? []).map(toTrack) as Track[];
+  }
+
+  async popularTracks(section: string, artistKey: string) {
+    try {
+      const p = await this.page(
+        `/library/sections/${section}/all`,
+        { type: 10, "artist.id": artistKey, sort: "ratingCount:desc", group: "title" },
+        0,
+        10,
+      );
+      return p.items.filter((m) => m.ratingCount).map(toTrack);
+    } catch {
+      return [];
+    }
+  }
+
+  async album(key: string) {
+    return toAlbum(await this.metadata(key));
+  }
+
+  async albumTracks(key: string) {
+    const c = await this.container(`/library/metadata/${key}/children`);
+    return (c.Metadata ?? []).map(toTrack) as Track[];
+  }
+
+  async playlists() {
+    const c = await this.container("/playlists", { playlistType: "audio" });
+    return (c.Metadata ?? []).map(toPlaylist) as Playlist[];
+  }
+
+  async playlist(key: string) {
+    return toPlaylist(await this.metadata(key));
+  }
+
+  async playlistTracks(key: string) {
+    const c = await this.container(`/playlists/${key}/items`);
+    return (c.Metadata ?? []).map(toTrack) as Track[];
+  }
+
+  private itemsUri(keys: string[]) {
+    return `server://${this.info.machineId}/com.plexapp.plugins.library/library/metadata/${keys.join(",")}`;
+  }
+
+  async createPlaylist(title: string, keys: string[]) {
+    const c = await this.request("/playlists", { type: "audio", title, smart: 0, uri: this.itemsUri(keys) }, "POST");
+    return toPlaylist(c.MediaContainer.Metadata[0]);
+  }
+
+  addToPlaylist(id: string, keys: string[]) {
+    return this.request(`/playlists/${id}/items`, { uri: this.itemsUri(keys) }, "PUT");
+  }
+
+  removeFromPlaylist(id: string, playlistItemID: number) {
+    return this.request(`/playlists/${id}/items/${playlistItemID}`, {}, "DELETE");
+  }
+
+  movePlaylistItem(id: string, playlistItemID: number, afterItemID?: number) {
+    return this.request(`/playlists/${id}/items/${playlistItemID}/move`, { after: afterItemID }, "PUT");
+  }
+
+  deletePlaylist(id: string) {
+    return this.request(`/playlists/${id}`, {}, "DELETE");
+  }
+
+  renamePlaylist(id: string, title: string) {
+    return this.request(`/playlists/${id}`, { title }, "PUT");
+  }
+
+  async search(section: string, query: string): Promise<Hub[]> {
+    const c = await this.container("/hubs/search", { query, sectionId: section, limit: 8 });
+    return (c.Hub ?? [])
+      .filter((h: any) => h.Metadata?.length && ["artist", "album", "track", "playlist"].includes(h.type))
+      .map((h: any) => ({
+        title: h.title,
+        type: h.type,
+        hubIdentifier: h.hubIdentifier,
+        itemType: h.type,
+        items: h.Metadata.map(convert),
+      }));
+  }
+
+  rate(key: string, rating: number | null) {
+    return this.request(
+      "/:/rate",
+      { key, identifier: "com.plexapp.plugins.library", rating: rating ?? -1 },
+      "PUT",
+    );
+  }
+
+  /**
+   * Reports playback so Plex shows it under Now Playing and remembers the position (viewOffset),
+   * which other Plex apps and Tonearm on other devices resume from.
+   */
+  timeline(t: Track, state: "playing" | "paused" | "stopped", timeMs: number, session: string) {
+    const params = {
+      ratingKey: t.ratingKey,
+      key: `/library/metadata/${t.ratingKey}`,
+      identifier: "com.plexapp.plugins.library",
+      state,
+      time: Math.round(timeMs),
+      duration: t.duration,
+      hasMDE: 1,
+    };
+    return fetch(this.url("/:/timeline", params), {
+      headers: { ...plexHeaders(this.info.token), "X-Plex-Session-Identifier": session },
+      keepalive: state === "stopped",
+    }).catch(() => undefined);
+  }
+
+  /** The track most recently played on any of the user's Plex players. */
+  async lastPlayed(section: string): Promise<Track | null> {
+    const c = await this.container(`/library/sections/${section}/all`, {
+      type: 10,
+      sort: "lastViewedAt:desc",
+      "X-Plex-Container-Start": 0,
+      "X-Plex-Container-Size": 1,
+    });
+    const m = c.Metadata?.[0];
+    return m ? toTrack(m) : null;
+  }
+
+  scrobble(key: string) {
+    return this.request("/:/scrobble", { key, identifier: "com.plexapp.plugins.library" }).catch(() => undefined);
+  }
+
+  /** Streams (lyrics, audio) for a track; the list endpoints don't include them. */
+  async trackStreams(key: string): Promise<any[]> {
+    const m = await this.metadata(key);
+    return m?.Media?.[0]?.Part?.[0]?.Stream ?? [];
+  }
+
+  async rawText(path: string): Promise<string> {
+    const r = await fetch(this.url(path, { "X-Plex-Token": this.info.token }), { headers: plexHeaders(this.info.token) });
+    if (!r.ok) throw new Error(String(r.status));
+    return r.text();
+  }
+
+  /** Loudness samples from sonic analysis, used to draw the waveform seek bar. */
+  async levels(audioStreamId: number, samples = 160): Promise<number[]> {
+    const c = await this.container(`/library/streams/${audioStreamId}/levels`, { subsample: samples });
+    return (c.Level ?? []).map((l: any) => Number(l.v ?? l.loudness ?? -60));
+  }
+}

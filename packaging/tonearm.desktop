@@ -1,0 +1,24 @@
+[Desktop Entry]
+Type=Application
+Name=Tonearm
+GenericName=Music Player
+Comment=Play music from your Plex Media Server
+Exec=tonearm %U
+Icon=tonearm
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=plex;music;player;audio;
+StartupWMClass=tonearm
+Actions=PlayPause;Next;Previous;
+
+[Desktop Action PlayPause]
+Name=Play/Pause
+Exec=tonearm --toggle
+
+[Desktop Action Next]
+Name=Next Track
+Exec=tonearm --next
+
+[Desktop Action Previous]
+Name=Previous Track
+Exec=tonearm --previous

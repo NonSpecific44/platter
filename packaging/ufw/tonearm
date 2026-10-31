@@ -1,0 +1,4 @@
+[Tonearm]
+title=Tonearm music player
+description=Remote control between Tonearm devices (Plex Companion server and GDM discovery)
+ports=32500:32510/tcp|32412/udp|32414/udp

@@ -1,0 +1,14 @@
+node_modules
+dist
+src-tauri/target
+src-tauri/gen/schemas
+packaging/flatpak/build*
+packaging/flatpak/.flatpak-builder
+packaging/pkg
+packaging/src
+*.pkg.tar.zst
+*.apk
+*.aab
+# Android release signing key: back this up somewhere safe, never commit it.
+.android-signing
+.claude/
