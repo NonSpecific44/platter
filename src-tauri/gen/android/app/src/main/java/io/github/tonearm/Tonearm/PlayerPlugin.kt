@@ -1,6 +1,13 @@
 package io.github.tonearm.Tonearm
 
 import android.app.Activity
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
+import androidx.core.content.FileProvider
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import android.content.ComponentName
 import android.content.Context
 import android.net.Uri
@@ -45,6 +52,12 @@ class SeekArgs {
 class PropArgs {
   lateinit var name: String
   var value: String = ""
+}
+
+@InvokeArg
+class UpdateArgs {
+  lateinit var url: String
+  var token: String? = null
 }
 
 @InvokeArg
@@ -243,5 +256,59 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         .build()
       p.replaceMediaItem(p.currentMediaItemIndex, cur.buildUpon().setMediaMetadata(meta).build())
     }
+  }
+
+  /**
+   * Downloads a release APK and opens the system installer. Android itself refuses the update
+   * unless it's signed with the same key as the installed app.
+   */
+  @Command
+  fun installUpdate(invoke: Invoke) {
+    val args = invoke.parseArgs(UpdateArgs::class.java)
+    if (Build.VERSION.SDK_INT >= 26 && !activity.packageManager.canRequestPackageInstalls()) {
+      activity.startActivity(
+        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${activity.packageName}"))
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+      )
+      invoke.reject("Allow Tonearm to install apps, then tap Update again")
+      return
+    }
+    Thread {
+      try {
+        val file = File(activity.cacheDir, "tonearm-update.apk")
+        download(args.url, args.token, file)
+        val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_VIEW)
+          .setDataAndType(uri, "application/vnd.android.package-archive")
+          .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        main.post { activity.startActivity(intent) }
+        invoke.resolve()
+      } catch (e: Exception) {
+        invoke.reject(e.message ?: e.toString())
+      }
+    }.start()
+  }
+
+  /** GitHub redirects asset downloads to storage that rejects the token, so follow by hand. */
+  private fun download(start: String, token: String?, dest: File) {
+    var url = start
+    var auth = !token.isNullOrBlank()
+    repeat(5) {
+      val conn = URL(url).openConnection() as HttpURLConnection
+      conn.instanceFollowRedirects = false
+      conn.setRequestProperty("Accept", "application/octet-stream")
+      if (auth) conn.setRequestProperty("Authorization", "Bearer ${token!!.trim()}")
+      val code = conn.responseCode
+      if (code in 300..399) {
+        url = conn.getHeaderField("Location") ?: throw Exception("Bad redirect")
+        auth = false
+        conn.disconnect()
+        return@repeat
+      }
+      if (code != 200) throw Exception("Download failed ($code)")
+      conn.inputStream.use { input -> dest.outputStream().use { input.copyTo(it) } }
+      return
+    }
+    throw Exception("Too many redirects")
   }
 }

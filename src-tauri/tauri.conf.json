@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Tonearm",
   "mainBinaryName": "tonearm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "io.github.tonearm.Tonearm",
   "build": {
     "frontendDist": "../dist",
@@ -22,17 +22,35 @@
         "dragDropEnabled": false
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null
+    }
   },
   "bundle": {
     "active": true,
-    "targets": ["appimage"],
+    "targets": [
+      "appimage"
+    ],
     "category": "Music",
     "shortDescription": "A Plex music player for the Linux desktop",
     "longDescription": "Tonearm streams music from your Plex Media Server with gapless playback, synced lyrics, MPRIS media keys and a fast keyboard-driven interface.",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ],
     "linux": {
-      "appimage": { "bundleMediaFramework": false }
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlFMUVBMkQ5QTRDRkNFNEYKUldSUHpzK2syYUllbnUzZ091Mnl3aGYrZnAxelQ2VkZSOFRFajdDNGNDMkdZZGdQWDRYSWljUFAK",
+      "endpoints": []
     }
   }
 }

@@ -4,6 +4,7 @@ import { findConnection, getServers, plexHeaders } from "./plex";
 import { initPlayer, offerHandoff, player, usePlayer } from "./player";
 import { refreshLibrary, startLive } from "./live";
 import { initRemote } from "./remote";
+import { startUpdateChecks } from "./updates";
 import { server, toast, useNav, useSession, useSettings } from "./store";
 import { setLoved, ratingOf, usePlaylists } from "./actions";
 import { accentFrom } from "./color";
@@ -174,9 +175,18 @@ function CurrentView() {
     const el = ref.current;
     if (!el) return;
     el.scrollTop = positions.current.get(key) ?? 0;
-    const onScroll = () => positions.current.set(key, el.scrollTop);
+    let idle = 0;
+    const onScroll = () => {
+      positions.current.set(key, el.scrollTop);
+      el.classList.add("scrolling");
+      clearTimeout(idle);
+      idle = window.setTimeout(() => el.classList.remove("scrolling"), 150);
+    };
     el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
+    return () => {
+      clearTimeout(idle);
+      el.removeEventListener("scroll", onScroll);
+    };
   }, [key]);
   let body: React.ReactNode;
   switch (v.kind) {
@@ -219,7 +229,7 @@ function MiniPlayer() {
   const track = usePlayer((s) => s.queue[s.index]?.track);
   return (
     <div className="mini" data-tauri-drag-region>
-      <Cover thumb={track?.thumb} size={160} className="mini-art" />
+      <Cover thumb={track?.thumb} className="mini-art" />
       <div className="mini-body" data-tauri-drag-region>
         <div className="mini-meta" data-tauri-drag-region>
           <div className="mini-title">{track?.title ?? "Nothing playing"}</div>
@@ -248,6 +258,7 @@ function Main() {
       void offerHandoff();
       startLive();
       void initRemote();
+      startUpdateChecks();
     });
     return useSession.subscribe((s, prev) => s.server?.uri !== prev.server?.uri && startLive());
   }, []);

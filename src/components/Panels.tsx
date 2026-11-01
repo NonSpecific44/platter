@@ -47,7 +47,7 @@ export function QueueRow({ item, i, current, onDragStart, onDrop }: {
       }
     >
       {!current && <GripVertical className="grip" size={14} />}
-      <Cover thumb={t.thumb} size={80} className="qrow-art" />
+      <Cover thumb={t.thumb} className="qrow-art" />
       <div className="qrow-meta">
         <div className="qrow-title">
           {current && <PlayingBars paused={paused} />} {t.title}

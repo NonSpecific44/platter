@@ -163,7 +163,7 @@ export function Palette() {
             const Icon = ICONS[e.kind];
             return (
               <div key={e.key} className={`pal-item ${i === sel ? "sel" : ""}`} onMouseMove={() => setSel(i)} onClick={(ev) => run(e, ev.shiftKey)}>
-                {e.kind === "command" ? <Icon size={16} className="pal-icon" /> : <Cover thumb={e.thumb} size={80} round={e.kind === "artist"} className="pal-art" />}
+                {e.kind === "command" ? <Icon size={16} className="pal-icon" /> : <Cover thumb={e.thumb} round={e.kind === "artist"} className="pal-art" />}
                 <div className="pal-text">
                   <div>{e.title}</div>
                   {e.sub && <div className="dim small">{e.sub}</div>}

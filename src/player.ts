@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Track } from "./plex";
 import { isAndroid } from "./platform";
+import { similarTracks } from "./similar";
 import { EQ_BANDS, fmtTime, loadJson, persist, sectionKey, server, toast, useSession, useSettings } from "./store";
 
 export interface QItem {
@@ -197,6 +198,37 @@ function trackStarted() {
   }).catch(() => undefined);
   set((st) => ({ history: [t, ...st.history.filter((h) => h.ratingKey !== t.ratingKey)].slice(0, 200) }));
   if (s.reportToPlex) server().timeline(t, get().paused ? "paused" : "playing", get().position * 1000, session);
+  void maybeAutoplay();
+}
+
+let autoplayBusy = false;
+let autoplayAnnounced = false;
+
+/**
+ * Autoplay: once the last track in the queue starts, append similar music so playback carries
+ * on (gaplessly, since the next track is queued in the backend straight away).
+ */
+async function maybeAutoplay() {
+  const s = get();
+  if (!useSettings.getState().autoplay || autoplayBusy || playerFlags.remote) return;
+  if (!s.queue.length || s.index < s.queue.length - 1 || s.repeat !== "off" || s.stopAfter) return;
+  autoplayBusy = true;
+  try {
+    const seeds = s.queue.slice(-5).map((q) => q.track);
+    const exclude = new Set([...s.queue.map((q) => q.track.ratingKey), ...s.history.slice(0, 150).map((t) => t.ratingKey)]);
+    const tracks = await similarTracks(seeds, exclude, 25);
+    // Give up if the queue changed while we were looking.
+    if (!tracks.length || get().queue.length !== s.queue.length || get().index !== s.index) return;
+    const added = items(tracks);
+    set((st) => ({ queue: [...st.queue, ...added], original: st.original ? [...st.original, ...added] : null }));
+    if (!autoplayAnnounced) {
+      autoplayAnnounced = true;
+      toast("Autoplay: queued similar music", { action: { label: "Turn off", run: () => useSettings.getState().set({ autoplay: false }) } });
+    }
+    await syncNext();
+  } finally {
+    autoplayBusy = false;
+  }
 }
 
 /**

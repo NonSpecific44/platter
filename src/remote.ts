@@ -526,6 +526,75 @@ async function lookForPlayback() {
   }
 }
 
+// ---- one device at a time ---------------------------------------------------------------
+//
+// Starting playback here pauses any other Tonearm on the account. Two paths, so it works even
+// when a firewall blocks one direction: this device asks the others to pause directly, and every
+// playing device watches the Plex server's session list and pauses itself when another Tonearm
+// starts playing after it did. The device that started last wins.
+
+/** Other Tonearm devices the Plex server currently has sessions for, and whether they're playing. */
+async function tonearmSessions() {
+  const me = clientId();
+  const c = await server().container("/status/sessions");
+  const out: { device: Device; playing: boolean }[] = [];
+  for (const m of c.Metadata ?? []) {
+    const pl = m.Player;
+    if (pl?.product !== PRODUCT || !pl.machineIdentifier || pl.machineIdentifier === me) continue;
+    out.push({
+      device: { name: pl.title || "another device", host: pl.address ?? "", port: 32500, clientId: pl.machineIdentifier, product: PRODUCT, deviceClass: "" },
+      playing: pl.state === "playing",
+    });
+  }
+  return out;
+}
+
+let wasPlaying = false;
+/** Which other devices were playing at the last look. */
+let othersPlaying = new Map<string, boolean>();
+
+function playingHere() {
+  const s = usePlayer.getState();
+  return s.loaded && !s.paused && !playerFlags.remote;
+}
+
+async function pauseOthers() {
+  const sessions = await tonearmSessions().catch(() => []);
+  othersPlaying = new Map(sessions.map((x) => [x.device.clientId, x.playing]));
+  for (const { device, playing } of sessions) {
+    if (!playing || !device.host) continue;
+    remoteFetch(device, "/tonearm/call", { method: "POST", body: JSON.stringify({ method: "pause", args: [] }) }, 4000).catch(
+      () => undefined, // its own session check will pause it
+    );
+  }
+}
+
+async function yieldToNewerDevice() {
+  if (!playingHere()) return;
+  const sessions = await tonearmSessions().catch(() => null);
+  if (!sessions || !playingHere()) return;
+  const started = sessions.find((x) => x.playing && !othersPlaying.get(x.device.clientId));
+  othersPlaying = new Map(sessions.map((x) => [x.device.clientId, x.playing]));
+  if (started) {
+    await local.pause();
+    toast(`Paused here: now playing on ${started.device.name}`, { action: { label: "Control it", run: () => void discover().then((ds) => {
+      const d = ds.find((x) => x.clientId === started.device.clientId) ?? started.device;
+      return connect(d);
+    }) } });
+  }
+}
+
+function watchExclusive() {
+  usePlayer.subscribe(() => {
+    const now = playingHere();
+    if (now && !wasPlaying && useSettings.getState().exclusivePlayback) void pauseOthers();
+    wasPlaying = now;
+  });
+  setInterval(() => {
+    if (useSettings.getState().exclusivePlayback) void yieldToNewerDevice();
+  }, 5000);
+}
+
 // ---- setup --------------------------------------------------------------------------------
 
 export async function initRemote() {
@@ -535,6 +604,7 @@ export async function initRemote() {
     (player as any)[m] = (...args: any[]) => (useRemote.getState().target ? callRemote(m, args) : orig(...args));
   }
   watchState();
+  watchExclusive();
   hostName = await invoke<string>("remote_hostname").catch(() => "");
   await listen<IncomingRequest>("remote://request", async (e) => {
     const r = e.payload;

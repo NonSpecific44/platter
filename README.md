@@ -19,10 +19,14 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 - Loves and ratings sync both ways. Playlists can be created, edited and reordered.
 - **Live library updates** through the server's notification socket, plus a refresh button (F5) that can also start a library scan (Shift+F5)
 
+**Autoplay**
+- When the queue runs out, Tonearm keeps going with similar music. It uses Plex's sonic analysis when available, then tracks by the same and similar artists, then the rest of your library. Turn it off in Settings → Playback.
+
 **Remote control**
 - The devices button in the player bar lists other Tonearms on your network. Pick one to control it: the player bar, queue and lyrics follow that device.
 - If music is playing on this device, picking another one moves playback there and continues from the same point. "Move playback to this device" brings it back.
 - When another Tonearm is already playing, Tonearm offers to control it.
+- One device plays at a time: starting music on one pauses Tonearm everywhere else (Settings → Playback).
 - Uses the Plex Companion protocol (HTTP on port 32500) and GDM discovery, so Plex apps can also see and control Tonearm.
 
 **Desktop**
@@ -57,6 +61,27 @@ That opens TCP 32500–32510 (remote-control server) and UDP 32412 and 32414 (di
 ```bash
 sudo ufw allow 32500:32510/tcp && sudo ufw allow 32412/udp && sudo ufw allow 32414/udp
 ```
+
+## Updates
+
+Tonearm checks GitHub for new releases (Settings → Updates).
+- **AppImage:** downloads the new version, verifies its signature against the key built into the app, and restarts.
+- **Android:** downloads the new APK and opens the installer.
+- **Arch package:** links to the release page.
+
+While the repository is private, the app needs a GitHub token to see releases. Create a fine-grained personal access token with read-only **Contents** access to this repository only, and paste it into Settings → Updates.
+
+### Publishing a release
+
+Updates are signed with the key in `.updater-signing/` (git-ignored, like the Android key; back up both).
+
+```bash
+export TAURI_SIGNING_PRIVATE_KEY="$(cat .updater-signing/tonearm-updater.key)"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat .updater-signing/password)"
+npx tauri build --bundles appimage    # also writes Tonearm_<version>_amd64.AppImage.sig
+```
+
+Attach the AppImage, the APK, the Arch package and a `latest.json` to the GitHub release. `latest.json` follows Tauri's updater format, and its platform `url` is the AppImage's API asset URL (`https://api.github.com/repos/<owner>/<repo>/releases/assets/<id>`).
 
 ## Building
 

@@ -88,6 +88,13 @@ export interface Settings {
   settingsVersion: number;
   /** Shown to other devices; empty means "Tonearm on <hostname>". */
   deviceName: string;
+  /** Keep playing similar music when the queue runs out. */
+  autoplay: boolean;
+  /** Starting playback here pauses Tonearm on your other devices. */
+  exclusivePlayback: boolean;
+  autoUpdateCheck: boolean;
+  /** Read access to the release repository while it is private. */
+  githubToken: string;
 }
 
 const defaultSettings: Settings = {
@@ -117,6 +124,10 @@ const defaultSettings: Settings = {
   sidebarCollapsed: false,
   settingsVersion: 2,
   deviceName: "",
+  autoplay: true,
+  exclusivePlayback: true,
+  autoUpdateCheck: true,
+  githubToken: "",
 };
 
 function migrate(s: Settings): Settings {

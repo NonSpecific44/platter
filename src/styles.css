@@ -184,7 +184,8 @@ input[type="color"] { width: 44px; height: 30px; border: none; background: none;
 .jumpbar button:hover:not(:disabled) { background: var(--bg-hover); color: var(--accent); }
 
 /* ---- cards & grids ---- */
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 22px 18px; }
+/* Fixed card width so covers land on whole pixels (see Cover). */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, 176px); justify-content: space-between; gap: 22px 18px; }
 .card { cursor: pointer; min-width: 0; content-visibility: auto; contain-intrinsic-size: 168px 230px; }
 .card-art { position: relative; margin-bottom: 9px; }
 .card-art .cover { transition: transform 0.18s ease, box-shadow 0.18s; }
@@ -204,8 +205,12 @@ input[type="color"] { width: 44px; height: 30px; border: none; background: none;
   aspect-ratio: 1; width: 100%; border-radius: 8px; overflow: hidden; background: var(--bg-elev2);
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
-.cover.round { border-radius: 50%; }
+/* clip-path is far cheaper than border-radius clipping when WebKitGTK repaints while scrolling. */
+.cover.round { border-radius: 0; clip-path: circle(50%); }
+/* No hover repaints (shadows, lifts) under a still cursor while the page scrolls past it. */
+.main.scrolling > * { pointer-events: none; }
 .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cover img.exact { image-rendering: pixelated; }
 .cover-fallback { width: 38%; height: 38%; color: var(--text-faint); }
 .loved-cover { background: linear-gradient(135deg, var(--accent), #7a2c8f); color: #fff; }
 .mix-cover { background: linear-gradient(135deg, #2c7a8f, var(--accent)); color: #fff; }

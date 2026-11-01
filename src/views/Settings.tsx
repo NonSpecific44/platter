@@ -9,6 +9,8 @@ import { QueueList } from "../components/Panels";
 import { measureFrameRate } from "../smooth";
 import { deviceName } from "../remote";
 import { isAndroid } from "../platform";
+import { getVersion } from "@tauri-apps/api/app";
+import { checkForUpdates, installUpdate, useUpdates } from "../updates";
 
 // ---- queue page ------------------------------------------------------------------
 
@@ -204,6 +206,49 @@ function FrameRate() {
 
 const android = isAndroid();
 
+function Updates() {
+  const { current, latest, checking, installing, error } = useUpdates();
+  const s = useSettings();
+  useEffect(() => {
+    if (!current) void getVersion().then((v) => useUpdates.setState({ current: v }));
+  }, [current]);
+  return (
+    <section className="set-group">
+      <h2>Updates</h2>
+      <Row
+        label={latest ? `Tonearm ${latest.version} is available` : `Tonearm ${current}`}
+        hint={error ?? (latest ? "Downloads and installs the update, then restarts Tonearm" : "Checks GitHub for new releases")}
+      >
+        <div className="row gap">
+          {latest && (
+            <button className="btn primary" disabled={installing} onClick={() => void installUpdate()}>
+              {installing ? "Updating…" : "Update now"}
+            </button>
+          )}
+          <button className="btn" disabled={checking} onClick={() => void checkForUpdates(true)}>
+            {checking ? "Checking…" : "Check now"}
+          </button>
+        </div>
+      </Row>
+      <Row label="Check for updates automatically">
+        <Toggle k="autoUpdateCheck" />
+      </Row>
+      <Row
+        label="GitHub token"
+        hint="Only needed while the release repository is private: a fine-grained token with read-only access to Contents on that repository"
+      >
+        <input
+          className="text-input"
+          type="password"
+          value={s.githubToken}
+          placeholder="github_pat_…"
+          onChange={(e) => s.set({ githubToken: e.target.value })}
+        />
+      </Row>
+    </section>
+  );
+}
+
 export function SettingsView() {
   const { user, server, section, set: setSession, signOut } = useSession();
   const s = useSettings();
@@ -261,6 +306,12 @@ export function SettingsView() {
         )}
         <Row label="Playback speed" hint="Pitch is preserved">
           <Select k="speed" options={[[0.75, "0.75×"], [0.9, "0.9×"], [1, "Normal"], [1.1, "1.1×"], [1.25, "1.25×"], [1.5, "1.5×"], [2, "2×"]]} />
+        </Row>
+        <Row label="Autoplay" hint="When the queue ends, keep playing similar music">
+          <Toggle k="autoplay" />
+        </Row>
+        <Row label="Play on one device at a time" hint="Starting music here pauses Tonearm on your other devices">
+          <Toggle k="exclusivePlayback" />
         </Row>
         <Row label="Smart shuffle" hint="Avoid playing the same artist twice in a row">
           <Toggle k="smartShuffle" />
@@ -343,7 +394,7 @@ export function SettingsView() {
           </button>
         </Row>
       </section>
-      <p className="dim small pad">Tonearm 0.1.0</p>
+      <Updates />
     </div>
   );
 }

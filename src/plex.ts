@@ -4,7 +4,7 @@
 import { fetch } from "@tauri-apps/plugin-http";
 
 export const PRODUCT = "Tonearm";
-export const VERSION = "0.1.0";
+export const VERSION = "0.1.1";
 
 export function clientId(): string {
   let id = localStorage.getItem("tonearm.clientId");
@@ -390,6 +390,12 @@ export class Server {
   async metadata(key: string) {
     const c = await this.container(`/library/metadata/${key}`);
     return c.Metadata?.[0];
+  }
+
+  /** Sonically similar tracks (needs Plex sonic analysis; empty otherwise). */
+  async nearest(key: string, limit: number) {
+    const c = await this.container(`/library/metadata/${key}/nearest`, { limit, maxDistance: 0.25 });
+    return (c.Metadata ?? []).map(toTrack) as Track[];
   }
 
   async artist(key: string) {

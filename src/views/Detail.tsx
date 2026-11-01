@@ -18,7 +18,7 @@ function Hero({ thumb, round, kicker, title, children, art }: {
   return (
     <header className={`hero ${bg ? "has-art" : ""}`}>
       {bg && <div className="hero-bg" style={{ backgroundImage: `url("${bg}")` }} />}
-      <Cover thumb={thumb} size={500} round={round} className="hero-cover" icon={round ? "artist" : "album"} />
+      <Cover thumb={thumb} round={round} className="hero-cover" icon={round ? "artist" : "album"} />
       <div className="hero-text">
         <div className="kicker">{kicker}</div>
         <h1 title={title}>{title}</h1>

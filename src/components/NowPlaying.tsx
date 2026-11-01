@@ -34,7 +34,7 @@ export function NowPlaying() {
       </button>
       <div className="np-body">
         <div className="np-left">
-          <Cover thumb={track?.thumb} size={900} className="np-art" icon="album" />
+          <Cover thumb={track?.thumb} className="np-art" icon="album" />
           {track && (
             <div className="np-meta">
               <div className="np-titlerow">

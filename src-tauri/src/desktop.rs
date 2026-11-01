@@ -76,6 +76,43 @@ fn set_close_to_tray(flags: State<AppFlags>, enabled: bool) {
     flags.close_to_tray.store(enabled, Ordering::Relaxed);
 }
 
+// ---- updates ---------------------------------------------------------------------
+
+/// "appimage" when the running copy can update itself; "package" when it was installed by a
+/// package manager and has to be updated there.
+#[tauri::command]
+fn update_kind() -> &'static str {
+    if std::env::var_os("APPIMAGE").is_some() {
+        "appimage"
+    } else {
+        "package"
+    }
+}
+
+/// Downloads the AppImage named in the release's `latest.json`, checks its signature against the
+/// public key built into the app, swaps it in and restarts. GitHub asset URLs need
+/// `Accept: application/octet-stream`, and a token while the repository is private.
+#[tauri::command]
+async fn update_install(app: AppHandle, manifest_url: String, token: Option<String>) -> Result<bool, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let url = manifest_url.parse().map_err(|e| format!("{e}"))?;
+    let mut builder = app
+        .updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| e.to_string())?
+        .header("Accept", "application/octet-stream")
+        .map_err(|e| e.to_string())?;
+    if let Some(t) = token.filter(|t| !t.trim().is_empty()) {
+        builder = builder.header("Authorization", format!("Bearer {}", t.trim())).map_err(|e| e.to_string())?;
+    }
+    let updater = builder.build().map_err(|e| e.to_string())?;
+    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+        return Ok(false);
+    };
+    update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    app.restart();
+}
+
 #[derive(serde::Serialize)]
 struct RenderInfo {
     mode: String,
@@ -172,6 +209,7 @@ pub fn run() {
             handle_cli(app, &args);
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppFlags::default())
@@ -210,6 +248,8 @@ pub fn run() {
             media_volume,
             set_close_to_tray,
             get_render_info,
+            update_kind,
+            update_install,
             set_render_mode,
             crate::remote::remote_reply,
             crate::remote::remote_identity,

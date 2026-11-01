@@ -12,3 +12,4 @@ packaging/src
 # Android release signing key: back this up somewhere safe, never commit it.
 .android-signing
 .claude/
+.updater-signing

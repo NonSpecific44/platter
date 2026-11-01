@@ -292,7 +292,7 @@ export function PlayerBar() {
         {track ? (
           <>
             <div className="pb-art" onClick={() => setNowPlaying(true)} title="Now playing (F)">
-              <Cover thumb={track.thumb} size={160} />
+              <Cover thumb={track.thumb} />
               <Maximize2 className="pb-art-hint" size={18} />
             </div>
             <div className="pb-meta">

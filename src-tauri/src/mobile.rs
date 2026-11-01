@@ -92,6 +92,16 @@ fn media_volume(volume: f64) {
 }
 
 #[tauri::command]
+fn update_kind() -> &'static str {
+    "android"
+}
+
+#[tauri::command]
+async fn update_install_apk(n: State<'_, Native>, url: String, token: Option<String>) -> Result<(), String> {
+    call(&n, "installUpdate", json!({ "url": url, "token": token })).map(|_| ())
+}
+
+#[tauri::command]
 fn set_close_to_tray(enabled: bool) {
     let _ = enabled;
 }
@@ -116,6 +126,8 @@ pub fn run() {
             media_playback,
             media_volume,
             set_close_to_tray,
+            update_kind,
+            update_install_apk,
             crate::remote::remote_reply,
             crate::remote::remote_identity,
             crate::remote::remote_discover,

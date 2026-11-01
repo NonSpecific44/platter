@@ -9,17 +9,44 @@ import { albumMenu, playAlbum, playArtist, setLoved, trackMenu, usePrompt, useRa
 
 // ---- artwork -----------------------------------------------------------------
 
-export function Cover({ thumb, size = 300, round, className = "", icon }: { thumb?: string; size?: number; round?: boolean; className?: string; icon?: "artist" | "album" }) {
+// One observer for every cover on screen.
+const widthCallbacks = new WeakMap<Element, (width: number) => void>();
+let coverObserver: ResizeObserver | null = null;
+
+function observeWidth(el: Element, cb: (width: number) => void) {
+  coverObserver ??= new ResizeObserver((entries) => {
+    for (const e of entries) widthCallbacks.get(e.target)?.(e.contentRect.width);
+  });
+  widthCallbacks.set(el, cb);
+  coverObserver.observe(el);
+  return () => {
+    coverObserver?.unobserve(el);
+    widthCallbacks.delete(el);
+  };
+}
+
+/**
+ * Artwork fetched at exactly the size it's drawn. Scaling images while scrolling is what drops
+ * frames in WebKitGTK, so when the cover spans a whole number of device pixels the image is
+ * drawn 1:1 with no filtering at all; otherwise it's fetched a little larger and scaled down.
+ */
+export function Cover({ thumb, round, className = "", icon }: { thumb?: string; round?: boolean; className?: string; icon?: "artist" | "album" }) {
   const [failed, setFailed] = useState(false);
-  const url = !failed ? server().imageUrl(thumb, size) : undefined;
+  const [width, setWidth] = useState(0);
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => observeWidth(ref.current!, setWidth), []);
   useEffect(() => setFailed(false), [thumb]);
+  const device = width * (window.devicePixelRatio || 1);
+  const exact = device > 0 && Math.abs(device - Math.round(device)) < 0.01;
+  const fetchSize = exact ? Math.round(device) : Math.ceil(device / 100) * 100;
+  const url = !failed && fetchSize ? server().imageUrl(thumb, fetchSize) : undefined;
   const Fallback = icon === "artist" ? User : icon === "album" ? Disc3 : Music;
   return (
-    <div className={`cover ${round ? "round" : ""} ${className}`}>
+    <div ref={ref} className={`cover ${round ? "round" : ""} ${className}`}>
       {url ? (
-        <img src={url} loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} alt="" />
+        <img src={url} className={exact ? "exact" : ""} loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} alt="" />
       ) : (
-        <Fallback className="cover-fallback" />
+        !thumb || failed ? <Fallback className="cover-fallback" /> : null
       )}
     </div>
   );
@@ -261,7 +288,7 @@ export function TrackList({ tracks, showAlbum, showArtist = "auto", showCover, n
             <Play size={14} fill="currentColor" />
           </button>
         </div>
-        {showCover && <Cover thumb={t.thumb} size={80} className="track-cover" />}
+        {showCover && <Cover thumb={t.thumb} className="track-cover" />}
         <div className="track-main">
           <div className="track-title">{t.title}</div>
           {artistShown && <ArtistLink t={t} />}
