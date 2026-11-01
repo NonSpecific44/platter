@@ -32,7 +32,7 @@ fn config_dir() -> Option<PathBuf> {
 }
 
 pub fn mode() -> String {
-    if std::env::var_os("TONEARM_COMPAT_RENDERING").is_some() {
+    if std::env::var_os("PLATTER_COMPAT_RENDERING").is_some() || std::env::var_os("TONEARM_COMPAT_RENDERING").is_some() {
         return "compat".into();
     }
     let dir = config_dir();

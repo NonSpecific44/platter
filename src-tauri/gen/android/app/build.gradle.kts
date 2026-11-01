@@ -34,7 +34,7 @@ android {
     }
     namespace = "io.github.tonearm.Tonearm"
     defaultConfig {
-        // Plex servers on the LAN and other Tonearms' remote-control servers are plain http.
+        // Plex servers on the LAN and other Platters' remote-control servers are plain http.
         manifestPlaceholders["usesCleartextTraffic"] = "true"
         applicationId = "io.github.tonearm.Tonearm"
         minSdk = 24

@@ -1,8 +1,10 @@
-# Tonearm
+# Platter
+
+*Formerly Tonearm.*
 
 A Plex music player for the Linux desktop and Android. Each device can control the others, and the UI matches across platforms.
 
-![Tonearm icon](public/icon.png)
+![Platter icon](public/icon.png)
 
 ## Features
 
@@ -20,22 +22,22 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 - **Live library updates** through the server's notification socket, plus a refresh button (F5) that can also start a library scan (Shift+F5)
 
 **Autoplay**
-- When the queue runs out, Tonearm keeps going with similar music. It uses Plex's sonic analysis when available, then tracks by the same and similar artists, then the rest of your library. Turn it off in Settings → Playback.
+- When the queue runs out, Platter keeps going with similar music. It uses Plex's sonic analysis when available, then tracks by the same and similar artists, then the rest of your library. Turn it off in Settings → Playback.
 
 **Devices (like Spotify Connect)**
-- Every Tonearm on your account shows what your other devices are playing, with live progress. A "Listening on …" bar appears when music is playing somewhere else.
+- Every Platter on your account shows what your other devices are playing, with live progress. A "Listening on …" bar appears when music is playing somewhere else.
 - **Play here** carries on with the same queue, track and position on this device and pauses the other one.
 - The devices button lists your devices. Pick one to send your music there and control it from here; the player bar, queue and lyrics follow that device.
-- One device plays at a time: starting music on one pauses Tonearm everywhere else (Settings → Playback).
-- Devices exchange their state every couple of seconds over the LAN. One working direction is enough, so a firewall on one side doesn't break it. Without any LAN link, Tonearm falls back to your Plex server's list of active sessions, which also shows other Plex apps.
-- Speaks the Plex Companion protocol (HTTP on port 32500) with GDM discovery, so Plex apps can also see and control Tonearm.
+- One device plays at a time: starting music on one pauses Platter everywhere else (Settings → Playback).
+- Devices exchange their state every couple of seconds over the LAN. One working direction is enough, so a firewall on one side doesn't break it. Without any LAN link, Platter falls back to your Plex server's list of active sessions, which also shows other Plex apps.
+- Speaks the Plex Companion protocol (HTTP on port 32500) with GDM discovery, so Plex apps can also see and control Platter.
 
 **Android**
 - Spotify-style layout: Home, Search and Your Library tabs, a mini player, full-screen Now Playing, and bottom-sheet menus. The back button works through pages and overlays.
 
 **Desktop**
 - MPRIS (media keys, KDE/GNOME media controls), track-change notifications, tray icon, close to tray
-- CLI controls: `tonearm --toggle | --next | --previous | --play | --pause | --stop`
+- CLI controls: `platter --toggle | --next | --previous | --play | --pause | --stop`
 - Mini player, full-screen Now Playing, synced lyrics (Plex or LRCLIB), waveform seek bar
 - Keyboard shortcuts for everything (press `?`), command palette (`Ctrl+K`)
 - Smooth scrolling at your monitor's refresh rate (Settings → Appearance → Frame rate)
@@ -46,18 +48,18 @@ Download from the [latest release](../../releases/latest):
 
 | Platform | File |
 | --- | --- |
-| Arch / CachyOS / Manjaro | `tonearm-*-x86_64.pkg.tar.zst`, install with `sudo pacman -U tonearm-*.pkg.tar.zst` |
-| Any Linux | `Tonearm_*_amd64.AppImage`, then `chmod +x` and run it |
-| Android 7+ (arm64) | `Tonearm-*-android-arm64.apk`, allow installs from your browser or file manager |
+| Arch / CachyOS / Manjaro | `platter-*-x86_64.pkg.tar.zst`, install with `sudo pacman -U platter-*.pkg.tar.zst` |
+| Any Linux | `Platter_*_amd64.AppImage`, then `chmod +x` and run it |
+| Android 7+ (arm64) | `Platter-*-android-arm64.apk`, allow installs from your browser or file manager |
 
 The Arch package and AppImage need `mpv` (libmpv) and `webkit2gtk-4.1` installed.
 
 ### Firewall (for remote control)
 
-If a firewall is running (`ufw` is on by default on some distributions), devices can't find or reach each other until you allow Tonearm's ports. The Arch package ships a ufw profile:
+If a firewall is running (`ufw` is on by default on some distributions), devices can't find or reach each other until you allow Platter's ports. The Arch package ships a ufw profile:
 
 ```bash
-sudo ufw allow Tonearm
+sudo ufw allow Platter
 ```
 
 That opens TCP 32500–32510 (remote-control server) and UDP 32412 and 32414 (discovery). Without a package, use:
@@ -68,7 +70,7 @@ sudo ufw allow 32500:32510/tcp && sudo ufw allow 32412/udp && sudo ufw allow 324
 
 ## Updates
 
-Tonearm checks GitHub for new releases (Settings → Updates).
+Platter checks GitHub for new releases (Settings → Updates).
 - **AppImage:** downloads the new version, verifies its signature against the key built into the app, and restarts.
 - **Android:** downloads the new APK and opens the installer.
 - **Arch package:** links to the release page.
@@ -80,9 +82,9 @@ While the repository is private, the app needs a GitHub token to see releases. C
 Updates are signed with the key in `.updater-signing/` (git-ignored, like the Android key; back up both).
 
 ```bash
-export TAURI_SIGNING_PRIVATE_KEY="$(cat .updater-signing/tonearm-updater.key)"
+export TAURI_SIGNING_PRIVATE_KEY="$(cat .updater-signing/platter-updater.key)"
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat .updater-signing/password)"
-npx tauri build --bundles appimage    # also writes Tonearm_<version>_amd64.AppImage.sig
+npx tauri build --bundles appimage    # also writes Platter_<version>_amd64.AppImage.sig
 ```
 
 Attach the AppImage, the APK, the Arch package and a `latest.json` to the GitHub release. `latest.json` follows Tauri's updater format, and its platform `url` is the AppImage's API asset URL (`https://api.github.com/repos/<owner>/<repo>/releases/assets/<id>`).
@@ -94,7 +96,7 @@ You need Rust (stable), Node 20+, `mpv` and `webkit2gtk-4.1`.
 ```bash
 npm ci
 npx tauri dev                       # run in development
-npx tauri build --no-bundle         # release binary in src-tauri/target/release/tonearm
+npx tauri build --no-bundle         # release binary in src-tauri/target/release/platter
 cd packaging && makepkg -si         # Arch package
 npx tauri build --bundles appimage  # AppImage
 ```

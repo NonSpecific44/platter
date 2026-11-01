@@ -1,7 +1,7 @@
-//! Remote control between Tonearm devices (and from other Plex apps).
+//! Remote control between Platter devices (and from other Plex apps).
 //!
-//! Each Tonearm runs a small HTTP server speaking the Plex Companion protocol, plus Tonearm's own
-//! `/tonearm/*` endpoints. The server only moves bytes: every request is handed to the frontend
+//! Each Platter runs a small HTTP server speaking the Plex Companion protocol, plus its own
+//! `/tonearm/*` endpoints (named from before the app was renamed; kept for compatibility). The server only moves bytes: every request is handed to the frontend
 //! (`remote://request`), which answers through `remote_reply`, so the protocol logic is shared
 //! between desktop and Android. Discovery uses Plex's GDM: a multicast "M-SEARCH" on
 //! 239.0.0.250:32412 that players answer with their name and port.
@@ -257,7 +257,7 @@ pub fn remote_hostname() -> String {
 #[tauri::command]
 pub async fn remote_discover(ms: Option<u64>) -> Result<Vec<Device>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        // A fixed port so a firewall can let the answers in (see packaging/ufw/tonearm).
+        // A fixed port so a firewall can let the answers in (see packaging/ufw/platter).
         let sock = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT))
             .or_else(|_| UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)))
             .map_err(|e| e.to_string())?;

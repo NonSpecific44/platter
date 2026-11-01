@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { Laptop, MonitorSpeaker, Pause, Play, Smartphone, Speaker, X } from "lucide-react";
 import { usePlayer } from "../player";
 import { fmtTime } from "../store";
-import { PRODUCT } from "../plex";
+import { isOurs } from "../plex";
 import { Peer, control, deviceName, disconnect, discover, isAndroid, nowPlaying, playHere, playThere, sendCommand, useRemote } from "../remote";
 import { Cover } from "./common";
 
@@ -58,7 +58,7 @@ export function DevicesSheet() {
 
   const list = Object.values(peers)
     .map((p) => ({ p, np: nowPlaying(p) }))
-    .filter(({ p, np }) => np || p.device.product === PRODUCT)
+    .filter(({ p, np }) => np || isOurs(p.device.product))
     .sort((a, b) => Number(!!b.np?.playing) - Number(!!a.np?.playing));
   const close = () => setOpen(false);
 
@@ -91,13 +91,13 @@ export function DevicesSheet() {
         {list.map(({ p, np }) => {
           const id = p.device.clientId;
           const isTarget = target?.clientId === id;
-          const isTonearm = p.device.product === PRODUCT;
+          const isOurDevice = isOurs(p.device.product);
           return (
             <div key={id} className={`dev-row ${isTarget ? "current" : ""}`}>
               <button
                 className="dev-main"
-                disabled={!isTonearm}
-                title={isTonearm ? (hereLoaded && !target ? `Move your music to ${p.device.name}` : `Control ${p.device.name}`) : undefined}
+                disabled={!isOurDevice}
+                title={isOurDevice ? (hereLoaded && !target ? `Move your music to ${p.device.name}` : `Control ${p.device.name}`) : undefined}
                 onClick={() => {
                   if (hereLoaded && !target) void playThere(id);
                   else void control(id);
@@ -110,7 +110,7 @@ export function DevicesSheet() {
                 <span className="dev-text">
                   <span className="dev-name">
                     {p.device.name}
-                    {!isTonearm && <span className="dim"> · {p.device.product}</span>}
+                    {!isOurDevice && <span className="dim"> · {p.device.product}</span>}
                   </span>
                   {np ? (
                     <>
@@ -150,7 +150,7 @@ export function DevicesSheet() {
 
         {!list.length && (
           <p className="dim small dev-empty">
-            {scanning ? "Looking for devices…" : "No other devices found. Open Tonearm on another device signed in to the same Plex account."}
+            {scanning ? "Looking for devices…" : "No other devices found. Open Platter on another device signed in to the same Plex account."}
           </p>
         )}
       </div>

@@ -54,14 +54,14 @@ impl Player {
             init.set_option("demuxer-max-bytes", "64MiB")?;
             init.set_option("demuxer-readahead-secs", "30")?;
             init.set_option("network-timeout", "15")?;
-            init.set_option("audio-client-name", "Tonearm")?;
+            init.set_option("audio-client-name", "Platter")?;
             init.set_option("volume-max", "100")?;
             init.set_option("replaygain-clip", "no")?;
             Ok(())
         })
         .map_err(err)?;
         let mpv = Arc::new(mpv);
-        let client = mpv.create_client(Some("tonearm-events")).map_err(err)?;
+        let client = mpv.create_client(Some("platter-events")).map_err(err)?;
         std::thread::Builder::new()
             .name("mpv-events".into())
             .spawn(move || event_loop(client, app))

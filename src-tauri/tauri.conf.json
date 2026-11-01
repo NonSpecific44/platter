@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Tonearm",
-  "mainBinaryName": "tonearm",
-  "version": "0.1.2",
+  "productName": "Platter",
+  "mainBinaryName": "platter",
+  "version": "0.2.0",
   "identifier": "io.github.tonearm.Tonearm",
   "build": {
     "frontendDist": "../dist",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Tonearm",
+        "title": "Platter",
         "width": 1280,
         "height": 820,
         "minWidth": 340,
@@ -33,7 +33,7 @@
     ],
     "category": "Music",
     "shortDescription": "A Plex music player for the Linux desktop",
-    "longDescription": "Tonearm streams music from your Plex Media Server with gapless playback, synced lyrics, MPRIS media keys and a fast keyboard-driven interface.",
+    "longDescription": "Platter streams music from your Plex Media Server with gapless playback, synced lyrics, MPRIS media keys and a fast keyboard-driven interface.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

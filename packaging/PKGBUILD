@@ -1,6 +1,9 @@
 # Build from the project folder:  cd packaging && makepkg -si
-pkgname=tonearm
-pkgver=0.1.2
+pkgname=platter
+# Formerly "Tonearm".
+replaces=(tonearm)
+conflicts=(tonearm)
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="A Plex music player for the Linux desktop"
 arch=('x86_64')
@@ -17,10 +20,10 @@ build() {
 
 package() {
   cd "$startdir/.."
-  install -Dm755 src-tauri/target/release/tonearm "$pkgdir/usr/bin/tonearm"
-  install -Dm644 packaging/tonearm.desktop "$pkgdir/usr/share/applications/tonearm.desktop"
-  install -Dm644 src-tauri/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/tonearm.png"
-  install -Dm644 src-tauri/icons/128x128@2x.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/tonearm.png"
-  install -Dm644 icon.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/tonearm.svg"
-  install -Dm644 packaging/ufw/tonearm "$pkgdir/etc/ufw/applications.d/tonearm"
+  install -Dm755 src-tauri/target/release/platter "$pkgdir/usr/bin/platter"
+  install -Dm644 packaging/platter.desktop "$pkgdir/usr/share/applications/platter.desktop"
+  install -Dm644 src-tauri/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/platter.png"
+  install -Dm644 src-tauri/icons/128x128@2x.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/platter.png"
+  install -Dm644 icon.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/platter.svg"
+  install -Dm644 packaging/ufw/platter "$pkgdir/etc/ufw/applications.d/platter"
 }

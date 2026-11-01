@@ -82,7 +82,7 @@ async function fromPlex(t: Track): Promise<Lyrics | null> {
 }
 
 async function fromLrclib(t: Track): Promise<Lyrics | null> {
-  const headers = { "Lrclib-Client": `Tonearm v${VERSION}` };
+  const headers = { "Lrclib-Client": `Platter v${VERSION}` };
   const params = new URLSearchParams({
     artist_name: t.artist,
     track_name: t.title,

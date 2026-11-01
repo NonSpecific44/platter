@@ -11,10 +11,9 @@
   <rect x="64" y="64" width="896" height="896" rx="224" fill="url(#bg)"/>
   <rect x="64" y="64" width="896" height="896" rx="224" fill="url(#hl)"/>
   <g filter="url(#sh)" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M 652.0 770.1 A 272 272 0 1 1 672.1 386.0" stroke-width="66"/>
-    <path d="M 422.1 436.4 A 140 140 0 1 1 332.1 543.7" stroke-width="38" stroke-opacity="0.78"/>
-    <path d="M 650 218 L 870 218" stroke-width="54"/>
-    <path d="M 762 218 L 762 492 Q 762 590 652 650" stroke-width="54"/>
-    <circle cx="470" cy="568" r="30" fill="#fff" stroke="none"/>
+    <path d="M 282.9 410.0 A 230 230 0 1 1 282.9 450.0" stroke-width="66"/>
+    <path d="M 472.7 321.9 A 115.0 115.0 0 1 1 398.7 410.0" stroke-width="38" stroke-opacity="0.78"/>
+    <path d="M 282 430 L 282 830" stroke-width="66"/>
+    <circle cx="512" cy="430" r="30" fill="#fff" stroke="none"/>
   </g>
 </svg>

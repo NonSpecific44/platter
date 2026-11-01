@@ -14,7 +14,7 @@ sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
   - org.freedesktop.Sdk.Extension.node22
-command: tonearm
+command: platter
 finish-args:
   - --share=ipc
   - --share=network
@@ -23,8 +23,8 @@ finish-args:
   - --socket=pulseaudio
   - --device=dri
   - --talk-name=org.freedesktop.Notifications
-  - --own-name=org.mpris.MediaPlayer2.tonearm
-  - --own-name=org.mpris.MediaPlayer2.tonearm.*
+  - --own-name=org.mpris.MediaPlayer2.platter
+  - --own-name=org.mpris.MediaPlayer2.platter.*
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin
 cleanup:
@@ -98,7 +98,7 @@ modules:
     build-commands:
       - npm ci
       - npx tauri build --no-bundle
-      - install -Dm755 src-tauri/target/release/tonearm /app/bin/tonearm
+      - install -Dm755 src-tauri/target/release/platter /app/bin/platter
       - install -Dm644 packaging/flatpak/io.github.tonearm.Tonearm.desktop /app/share/applications/io.github.tonearm.Tonearm.desktop
       - install -Dm644 packaging/flatpak/io.github.tonearm.Tonearm.metainfo.xml /app/share/metainfo/io.github.tonearm.Tonearm.metainfo.xml
       - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/io.github.tonearm.Tonearm.png

@@ -1,6 +1,6 @@
 [package]
-name = "tonearm"
-version = "0.1.2"
+name = "platter"
+version = "0.2.0"
 description = "A Plex music player for the Linux desktop"
 edition = "2021"
 license = "MIT"

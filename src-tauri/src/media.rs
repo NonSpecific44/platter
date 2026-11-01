@@ -58,13 +58,13 @@ impl Media {
         let cover_dir = app
             .path()
             .app_cache_dir()
-            .unwrap_or_else(|_| std::env::temp_dir().join("tonearm"))
+            .unwrap_or_else(|_| std::env::temp_dir().join("platter"))
             .join("covers");
         let _ = std::fs::create_dir_all(&cover_dir);
 
         let controls = MediaControls::new(PlatformConfig {
-            dbus_name: "tonearm",
-            display_name: "Tonearm",
+            dbus_name: "platter",
+            display_name: "Platter",
             hwnd: None,
         })
         .ok()
@@ -119,16 +119,16 @@ impl Media {
 
         if meta.notify {
             let mut n = notify_rust::Notification::new();
-            n.appname("Tonearm")
+            n.appname("Platter")
                 .summary(&meta.title)
                 .body(&format!("{} — {}", meta.artist, meta.album))
                 .timeout(notify_rust::Timeout::Milliseconds(4000))
                 .hint(notify_rust::Hint::Transient(true))
                 .hint(notify_rust::Hint::Category("x-gnome.music".into()))
-                .hint(notify_rust::Hint::DesktopEntry("tonearm".into()));
+                .hint(notify_rust::Hint::DesktopEntry("platter".into()));
             match &cover {
                 Some(p) => n.icon(&p.display().to_string()),
-                None => n.icon("tonearm"),
+                None => n.icon("platter"),
             };
             // Replace our previous notification instead of stacking them up.
             let mut last = self.last_notification.lock().unwrap();

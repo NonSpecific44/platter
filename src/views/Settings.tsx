@@ -185,7 +185,7 @@ function FrameRate() {
   if (!info) return null;
   const hint =
     info.mode !== initial
-      ? "Restart Tonearm to apply"
+      ? "Restart Platter to apply"
       : `Now ${EFFECTIVE[info.effective] ?? info.effective}${fps ? `, drawing at ${fps} fps` : ""}. Use Compatibility if you see flicker or a blank window.`;
   return (
     <Row label="Frame rate" hint={hint}>
@@ -216,8 +216,8 @@ function Updates() {
     <section className="set-group">
       <h2>Updates</h2>
       <Row
-        label={latest ? `Tonearm ${latest.version} is available` : `Tonearm ${current}`}
-        hint={error ?? (latest ? "Downloads and installs the update, then restarts Tonearm" : "Checks GitHub for new releases")}
+        label={latest ? `Platter ${latest.version} is available` : `Platter ${current}`}
+        hint={error ?? (latest ? "Downloads and installs the update, then restarts Platter" : "Checks GitHub for new releases")}
       >
         <div className="row gap">
           {latest && (
@@ -310,7 +310,7 @@ export function SettingsView() {
         <Row label="Autoplay" hint="When the queue ends, keep playing similar music">
           <Toggle k="autoplay" />
         </Row>
-        <Row label="Play on one device at a time" hint="Starting music here pauses Tonearm on your other devices">
+        <Row label="Play on one device at a time" hint="Starting music here pauses Platter on your other devices">
           <Toggle k="exclusivePlayback" />
         </Row>
         <Row label="Smart shuffle" hint="Avoid playing the same artist twice in a row">
@@ -377,7 +377,7 @@ export function SettingsView() {
         <Row label="Close to tray" hint="Keep playing in the background when the window is closed">
           <Toggle k="closeToTray" />
         </Row>
-        <Row label="Track-change notifications" hint="Only shown while Tonearm isn't focused">
+        <Row label="Track-change notifications" hint="Only shown while Platter isn't focused">
           <Toggle k="notifications" />
         </Row>
           </>

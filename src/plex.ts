@@ -3,8 +3,10 @@
 // CORS and self-signed LAN setups don't get in the way.
 import { fetch } from "@tauri-apps/plugin-http";
 
-export const PRODUCT = "Tonearm";
-export const VERSION = "0.1.2";
+export const PRODUCT = "Platter";
+/** Earlier versions called themselves Tonearm; they speak the same protocol. */
+export const isOurs = (product: string | undefined) => product === PRODUCT || product === "Tonearm";
+export const VERSION = "0.2.0";
 
 export function clientId(): string {
   let id = localStorage.getItem("tonearm.clientId");
@@ -501,7 +503,7 @@ export class Server {
 
   /**
    * Reports playback so Plex shows it under Now Playing and remembers the position (viewOffset),
-   * which other Plex apps and Tonearm on other devices resume from.
+   * which other Plex apps and Platter on other devices resume from.
    */
   timeline(t: Track, state: "playing" | "paused" | "stopped", timeMs: number, session: string) {
     const params = {

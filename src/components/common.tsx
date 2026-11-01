@@ -515,7 +515,7 @@ export function HelpModal() {
             </div>
           ))}
         </div>
-        <p className="dim small">Media keys, desktop widgets and playerctl work via MPRIS. From a terminal: <code>tonearm --toggle | --next | --previous</code></p>
+        <p className="dim small">Media keys, desktop widgets and playerctl work via MPRIS. From a terminal: <code>platter --toggle | --next | --previous</code></p>
         <div className="modal-actions">
           <button className="btn primary" onClick={() => setHelp(false)}>
             Close

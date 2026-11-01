@@ -1,17 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>io.github.tonearm.Tonearm</id>
-  <name>Tonearm</name>
+  <name>Platter</name>
   <summary>Play music from your Plex Media Server</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <description>
-    <p>Tonearm streams music from Plex with gapless playback, synced lyrics, an equalizer,
+    <p>Platter streams music from Plex with gapless playback, synced lyrics, an equalizer,
     MPRIS media-key support and a fast keyboard-driven interface.</p>
   </description>
   <launchable type="desktop-id">io.github.tonearm.Tonearm.desktop</launchable>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.0" date="2026-11-01"/>
     <release version="0.1.2" date="2026-11-01"/>
     <release version="0.1.1" date="2026-11-01"/>
     <release version="0.1.0" date="2026-10-31"/>

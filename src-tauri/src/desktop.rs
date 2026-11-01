@@ -129,7 +129,7 @@ fn set_render_mode(mode: String) -> Result<(), String> {
     render::set_mode(&mode)
 }
 
-/// `tonearm --next` etc. forwarded from a second instance.
+/// `platter --next` etc. forwarded from a second instance.
 fn handle_cli(app: &AppHandle, args: &[String]) {
     let mut handled = false;
     for arg in args.iter().skip(1) {
@@ -165,7 +165,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         MenuItem::with_id(app, "toggle", "Play / Pause", true, None::<&str>)?,
         MenuItem::with_id(app, "next", "Next", true, None::<&str>)?,
         MenuItem::with_id(app, "previous", "Previous", true, None::<&str>)?,
-        MenuItem::with_id(app, "window", "Show / Hide Tonearm", true, None::<&str>)?,
+        MenuItem::with_id(app, "window", "Show / Hide Platter", true, None::<&str>)?,
         MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?,
     ];
     let sep1 = PredefinedMenuItem::separator(app)?;
@@ -177,7 +177,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().cloned().expect("bundled icon"))
-        .tooltip("Tonearm")
+        .tooltip("Platter")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -257,5 +257,5 @@ pub fn run() {
             crate::remote::remote_hostname,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Tonearm");
+        .expect("error while running Platter");
 }

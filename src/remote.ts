@@ -2,11 +2,11 @@
 //
 // Receiving: the backend's companion server forwards each HTTP request here (remote://request).
 // Plex apps can use the standard Companion endpoints (/resources, /player/timeline/poll,
-// /player/playback/*); other Tonearms use /tonearm/state (a long-polled snapshot of the whole
+// /player/playback/*); other Platters use /tonearm/state (a long-polled snapshot of the whole
 // player) and /tonearm/call (run any queue or transport action), which need a token from the
 // same Plex account.
 //
-// Syncing (Tonearm to Tonearm): every few seconds each device POSTs its state to the others'
+// Syncing (Platter to Platter): every few seconds each device POSTs its state to the others'
 // /tonearm/sync and gets theirs back, along with any commands waiting for it. One working
 // direction is enough: if the phone can't reach the PC (firewall), the PC's next sync to the
 // phone collects the phone's commands. Every device therefore knows what the others are playing,
@@ -19,7 +19,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { fetch } from "@tauri-apps/plugin-http";
-import { PRODUCT, Track, VERSION, clientId, getUser, plexHeaders, toTrack } from "./plex";
+import { PRODUCT, Track, VERSION, clientId, getUser, isOurs, plexHeaders, toTrack } from "./plex";
 import { currentTrack, player, playerFlags, usePlayer } from "./player";
 import { fmtTime, server, toast, useSession, useSettings } from "./store";
 import { isAndroid } from "./platform";
@@ -346,9 +346,9 @@ export function deviceName() {
   if (custom) return custom;
   if (isAndroid()) {
     const model = /Android [^;]*; ([^;)]+?)(?: Build|\))/.exec(navigator.userAgent)?.[1];
-    return model ? `Tonearm on ${model}` : "Tonearm on Android";
+    return model ? `Platter on ${model}` : "Platter on Android";
   }
-  return hostName ? `Tonearm on ${hostName}` : "Tonearm";
+  return hostName ? `Platter on ${hostName}` : "Platter";
 }
 
 async function announce() {
@@ -509,14 +509,14 @@ function syncSoon() {
   soon = window.setTimeout(() => void syncAll(), 250);
 }
 
-/** Tonearm devices on the network, plus anything the Plex server says is playing. */
+/** Platter devices on the network, plus anything the Plex server says is playing. */
 export async function discover() {
   useRemote.setState({ scanning: true });
   try {
     const me = clientId();
     const gdm = await invoke<Device[]>("remote_discover", { ms: 1200 }).catch(() => [] as Device[]);
     for (const d of gdm) {
-      if (d.product === PRODUCT && d.clientId !== me) {
+      if (isOurs(d.product) && d.clientId !== me) {
         patchPeer(d.clientId, (p) => ({ ...(p ?? emptyPeer(d)), device: { ...(p?.device ?? d), ...d }, lastSeen: Date.now() }));
       }
     }
@@ -543,7 +543,7 @@ async function refreshSessions() {
     seen.add(pl.machineIdentifier);
     const d: Device = {
       name: pl.title || pl.product || "Plex player",
-      host: pl.product === PRODUCT ? pl.address ?? "" : "",
+      host: isOurs(pl.product) ? pl.address ?? "" : "",
       port: 32500,
       clientId: pl.machineIdentifier,
       product: pl.product ?? "",
@@ -572,7 +572,7 @@ export interface NowPlaying {
   /** The full queue, when the device synced it to us. */
   queue: Track[] | null;
   index: number;
-  /** Whether we can send it commands (it's a Tonearm we sync with). */
+  /** Whether we can send it commands (it's a Platter we sync with). */
   controllable: boolean;
 }
 
@@ -605,7 +605,7 @@ export function nowPlaying(p: Peer): NowPlaying | null {
       playing: s.playing,
       queue: null,
       index: 0,
-      controllable: p.device.product === PRODUCT && (!!st || p.reachable),
+      controllable: isOurs(p.device.product) && (!!st || p.reachable),
     };
   }
   return null;
@@ -629,7 +629,7 @@ export async function playHere(id: string) {
   toast(`Playing here from ${fmtTime(np.position)}`);
 }
 
-/** Send this device's music to another Tonearm and control it from here. */
+/** Send this device's music to another Platter and control it from here. */
 export async function playThere(id: string) {
   const p = useRemote.getState().peers[id];
   if (!p) return;
@@ -713,9 +713,9 @@ function onPeerState(id: string) {
 
 // ---- one device at a time ---------------------------------------------------------------
 //
-// Starting playback here pauses every other Tonearm on the account: through the sync channel
+// Starting playback here pauses every other Platter on the account: through the sync channel
 // when there is one, and otherwise each playing device watches the Plex session list and pauses
-// itself when another Tonearm starts after it did. The device that started last wins.
+// itself when another Platter starts after it did. The device that started last wins.
 
 let wasPlaying = false;
 let othersPlaying = new Map<string, boolean>();
@@ -736,7 +736,7 @@ async function yieldToNewerDevice() {
   if (!playingHere()) return;
   await refreshSessions();
   if (!playingHere()) return;
-  const peers = Object.values(useRemote.getState().peers).filter((p) => p.device.product === PRODUCT && p.session);
+  const peers = Object.values(useRemote.getState().peers).filter((p) => isOurs(p.device.product) && p.session);
   const started = peers.find((p) => p.session!.playing && !othersPlaying.get(p.device.clientId));
   othersPlaying = new Map(peers.map((p) => [p.device.clientId, p.session!.playing]));
   if (started) {

@@ -72,9 +72,9 @@ export async function checkForUpdates(manual = false) {
     const available = newer(latest.version, current);
     useUpdates.setState({ current, latest: available ? latest : null });
     if (available) {
-      toast(`Tonearm ${latest.version} is available`, { action: { label: "Update", run: () => void installUpdate() } });
+      toast(`Platter ${latest.version} is available`, { action: { label: "Update", run: () => void installUpdate() } });
     } else if (manual) {
-      toast(`Tonearm ${current} is up to date`);
+      toast(`Platter ${current} is up to date`);
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -99,7 +99,7 @@ export async function installUpdate() {
     } else if (kind === "appimage") {
       const manifest = rel.assets.find((a) => a.name === "latest.json");
       if (!manifest) throw new Error("this release has no update manifest");
-      toast("Downloading update… Tonearm will restart when it's ready");
+      toast("Downloading update… Platter will restart when it's ready");
       await invoke("update_install", { manifestUrl: manifest.url, token: token() });
     } else {
       // Installed by a package manager: it has to be updated the same way.

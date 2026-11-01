@@ -9,7 +9,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div className="login">
       <div className="login-card">
         <img src="/icon.png" className="login-logo" alt="" />
-        <h1>Tonearm</h1>
+        <h1>Platter</h1>
         {children}
       </div>
     </div>
@@ -90,7 +90,7 @@ export function SignIn() {
         </div>
       )}
       {error && <p className="error-text">{error}</p>}
-      <p className="dim small">Tonearm never sees your password. Sign-in happens on plex.tv.</p>
+      <p className="dim small">Platter never sees your password. Sign-in happens on plex.tv.</p>
     </Shell>
   );
 }

@@ -134,5 +134,5 @@ pub fn run() {
             crate::remote::remote_hostname,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Tonearm");
+        .expect("error while running Platter");
 }
