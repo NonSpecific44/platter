@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ListMusic, Maximize2, Mic2, MoonStar, Pause, PictureInPicture2, Play, Repeat, Repeat1, Shuffle, SkipBack,
-  SkipForward, Volume1, Volume2, VolumeX, Gauge, OctagonPause, Loader2, MonitorSpeaker,
+  SkipForward, Volume1, Volume2, VolumeX, Gauge, OctagonPause, Loader2,
 } from "lucide-react";
-import { connect, deviceName, disconnect, discover, isAndroid, useRemote } from "../remote";
+import { isAndroid, useRemote } from "../remote";
+import { DevicesButton, ElsewhereBar } from "./Devices";
 import { currentTrack, player, usePlayer } from "../player";
 import { fmtTime, openMenu, server, useNav, useSettings, MenuItem } from "../store";
 import { Cover, Heart_ } from "./common";
@@ -124,7 +125,7 @@ export function SeekBar({ compact }: { compact?: boolean }) {
  * Calls `paint` once per display frame with the playhead position. The backend only reports
  * position ~4 times a second, so in between it's extrapolated from the last report.
  */
-function usePlayhead(paint: (seconds: number) => void) {
+export function usePlayhead(paint: (seconds: number) => void) {
   const paintRef = useRef(paint);
   paintRef.current = paint;
   const dirty = useRef(true);
@@ -243,39 +244,6 @@ function moreMenu(): MenuItem[] {
   ];
 }
 
-/** Pick which device plays: this one or another Tonearm on the network. */
-export function DevicesButton() {
-  const target = useRemote((s) => s.target);
-  const scanning = useRemote((s) => s.scanning);
-  const open = async (e: React.MouseEvent) => {
-    const at = { clientX: e.clientX, clientY: e.clientY, preventDefault() {}, stopPropagation() {} };
-    const devices = await discover();
-    const items: MenuItem[] = [
-      {
-        label: `${target ? "" : "✓ "}This device (${deviceName()})`,
-        run: () => target && disconnect(),
-      },
-    ];
-    if (target) items.push({ label: `Move playback to this device`, run: () => disconnect(true) });
-    items.push({ label: "", separator: true });
-    if (!devices.length) items.push({ label: "No other Tonearm devices found", disabled: true });
-    for (const d of devices) {
-      const np = d.nowPlaying ? ` — ${d.nowPlaying.paused ? "paused" : "playing"}: ${d.nowPlaying.title}` : "";
-      items.push({ label: `${target?.clientId === d.clientId ? "✓ " : ""}${d.name}${np}`, run: () => connect(d) });
-    }
-    openMenu(at, items);
-  };
-  return (
-    <button
-      className={`icon-btn toggle ${target ? "on" : ""} ${scanning ? "spinning-soft" : ""}`}
-      onClick={open}
-      title={target ? `Playing on ${target.name}` : "Play on another device"}
-    >
-      <MonitorSpeaker size={17} />
-    </button>
-  );
-}
-
 function RemoteBadge() {
   const target = useRemote((s) => s.target);
   if (!target) return null;
@@ -288,6 +256,7 @@ export function PlayerBar() {
   const { panel, setPanel, setNowPlaying, go } = useNav();
   return (
     <footer className="playerbar">
+      <ElsewhereBar />
       <div className="pb-left">
         {track ? (
           <>

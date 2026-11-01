@@ -5,6 +5,8 @@ import { player } from "../player";
 import { sectionKey, server, toast, useNav, useSession } from "../store";
 import { prompt, useData, usePaged, usePlaylists, invalidate } from "../actions";
 import { AlbumCard, ArtistCard, ErrorBox, Loading, PlaylistCard, Shelf } from "../components/common";
+import { PageHead, RecentTiles } from "../components/Phone";
+import { useIsPhone } from "../platform";
 
 // ---- home ------------------------------------------------------------------------
 
@@ -19,28 +21,9 @@ export function Home() {
   const hubs = useData(`hubs:${sec}`, () => server().hubs(sec));
   const random = useData(`random:${sec}`, () => server().randomAlbums(sec, 16));
   const go = useNav((s) => s.go);
-
-  return (
-    <div className="view">
-      <header className="home-head">
-        <h1>
-          {greeting()}
-          {user?.title ? `, ${user.title.split(" ")[0]}` : ""}
-        </h1>
-        <div className="row gap">
-          <button className="btn primary" onClick={() => player.shuffleLibrary()}>
-            <Shuffle size={16} /> Shuffle library
-          </button>
-          <button className="btn" onClick={() => go({ kind: "playlist", id: "loved" })}>
-            <Heart size={16} /> Loved tracks
-          </button>
-          <button className="btn" onClick={() => useNav.getState().setPalette(true)}>
-            <Search size={16} /> Search <kbd>Ctrl K</kbd>
-          </button>
-        </div>
-      </header>
-      {hubs.error && <ErrorBox error={hubs.error} retry={hubs.reload} />}
-      {hubs.loading && <Loading />}
+  const phone = useIsPhone();
+  const shelves = (
+    <>
       {hubs.data?.map((h) => (
         <Shelf key={h.hubIdentifier} title={h.title}>
           {h.items.map((it) =>
@@ -63,6 +46,49 @@ export function Home() {
           ))}
         </Shelf>
       )}
+    </>
+  );
+
+  if (phone)
+    return (
+      <div className="view phone-view">
+        <PageHead title={`${greeting()}${user?.title ? `, ${user.title.split(" ")[0]}` : ""}`} />
+        <div className="chips phone-chips">
+          <button className="chip" onClick={() => player.shuffleLibrary()}>
+            <Shuffle size={14} /> Shuffle library
+          </button>
+          <button className="chip" onClick={() => go({ kind: "playlist", id: "loved" })}>
+            <Heart size={14} /> Loved
+          </button>
+        </div>
+        <RecentTiles />
+        {hubs.error && <ErrorBox error={hubs.error} retry={hubs.reload} />}
+        {hubs.loading && <Loading />}
+        {shelves}
+      </div>
+    );
+  return (
+    <div className="view">
+      <header className="home-head">
+        <h1>
+          {greeting()}
+          {user?.title ? `, ${user.title.split(" ")[0]}` : ""}
+        </h1>
+        <div className="row gap">
+          <button className="btn primary" onClick={() => player.shuffleLibrary()}>
+            <Shuffle size={16} /> Shuffle library
+          </button>
+          <button className="btn" onClick={() => go({ kind: "playlist", id: "loved" })}>
+            <Heart size={16} /> Loved tracks
+          </button>
+          <button className="btn" onClick={() => useNav.getState().setPalette(true)}>
+            <Search size={16} /> Search <kbd>Ctrl K</kbd>
+          </button>
+        </div>
+      </header>
+      {hubs.error && <ErrorBox error={hubs.error} retry={hubs.reload} />}
+      {hubs.loading && <Loading />}
+      {shelves}
     </div>
   );
 }

@@ -6,15 +6,22 @@
 // player) and /tonearm/call (run any queue or transport action), which need a token from the
 // same Plex account.
 //
+// Syncing (Tonearm to Tonearm): every few seconds each device POSTs its state to the others'
+// /tonearm/sync and gets theirs back, along with any commands waiting for it. One working
+// direction is enough: if the phone can't reach the PC (firewall), the PC's next sync to the
+// phone collects the phone's commands. Every device therefore knows what the others are playing,
+// with the whole queue and position, which drives the "Listening on …" bar and "Play here".
+// Without any LAN link, the Plex server's session list still gives the track and position.
+//
 // Controlling: picking another device routes every `player` action to it and mirrors its state
 // into usePlayer, so the whole UI (player bar, queue, lyrics) follows the remote device.
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { fetch } from "@tauri-apps/plugin-http";
-import { PRODUCT, VERSION, clientId, getUser, plexHeaders, toTrack } from "./plex";
+import { PRODUCT, Track, VERSION, clientId, getUser, plexHeaders, toTrack } from "./plex";
 import { currentTrack, player, playerFlags, usePlayer } from "./player";
-import { server, toast, useSession, useSettings } from "./store";
+import { fmtTime, server, toast, useSession, useSettings } from "./store";
 import { isAndroid } from "./platform";
 
 export { isAndroid };
@@ -26,23 +33,34 @@ export interface Device {
   clientId: string;
   product: string;
   deviceClass: string;
-  /** What it's playing, when we could ask. */
-  nowPlaying?: { title: string; artist: string; paused: boolean };
+}
+
+/** Everything another device needs to show, mirror or take over this one's playback. */
+export type Snapshot = Pick<
+  ReturnType<typeof usePlayer.getState>,
+  "queue" | "index" | "position" | "duration" | "paused" | "loaded" | "buffering" | "volume" | "muted" | "shuffle" | "repeat" | "stopAfter"
+> & { version: number; playingSince: number };
+
+/** Another device, as last heard from (directly, or through the Plex server). */
+export interface Peer {
+  device: Device;
+  /** Full state from a sync, with the local time it arrived. */
+  state: Snapshot | null;
+  stateAt: number;
+  /** What the Plex server says it's playing, when there's no direct link. */
+  session: { track: Track; position: number; playing: boolean; at: number } | null;
+  /** Whether this device can open connections to it. */
+  reachable: boolean;
+  lastSeen: number;
 }
 
 interface RemoteState {
-  devices: Device[];
+  peers: Record<string, Peer>;
   scanning: boolean;
   target: Device | null;
 }
 
-export const useRemote = create<RemoteState>(() => ({ devices: [], scanning: false, target: null }));
-
-/** Everything a controller needs to mirror this device. */
-type Snapshot = Pick<
-  ReturnType<typeof usePlayer.getState>,
-  "queue" | "index" | "position" | "duration" | "paused" | "loaded" | "buffering" | "volume" | "muted" | "shuffle" | "repeat" | "stopAfter"
-> & { version: number };
+export const useRemote = create<RemoteState>(() => ({ peers: {}, scanning: false, target: null }));
 
 const ROUTED = [
   "toggle", "play", "pause", "stop", "next", "previous", "seek", "seekBy", "setVolume", "toggleMute", "jump",
@@ -61,13 +79,17 @@ let lastSig = "";
 let lastPos = { pos: 0, at: 0 };
 let waiters: (() => void)[] = [];
 let commandId = 0;
+let playingSince = 0;
 
 function signature(s: ReturnType<typeof usePlayer.getState>) {
   return [s.queue.map((q) => q.uid).join(","), s.index, s.paused, s.loaded, s.buffering, s.volume, s.muted, s.shuffle, s.repeat, s.stopAfter, Math.round(s.duration)].join("|");
 }
 
 function watchState() {
-  usePlayer.subscribe((s) => {
+  usePlayer.subscribe((s, p) => {
+    const playing = s.loaded && !s.paused && !playerFlags.remote;
+    if (playing && !(p.loaded && !p.paused)) playingSince = Date.now();
+    if (!playing) playingSince = 0;
     const sig = signature(s);
     const now = performance.now();
     const expected = lastPos.pos + (s.paused ? 0 : (now - lastPos.at) / 1000);
@@ -109,6 +131,7 @@ function snapshot(): Snapshot {
     repeat: s.repeat,
     stopAfter: s.stopAfter,
     version,
+    playingSince,
   };
 }
 
@@ -222,6 +245,14 @@ async function route(r: IncomingRequest): Promise<{ status: number; contentType:
       await waitForChange(since, Math.min(Number(q.wait ?? 0), 25) * 1000);
       return { status: 200, contentType: "application/json", body: JSON.stringify(snapshot()) };
     }
+    if (p === "/tonearm/sync") {
+      const msg = JSON.parse(r.body || "{}") as SyncMessage;
+      if (!msg.device?.clientId) return { status: 400, contentType: "text/plain", body: "bad sync" };
+      receivePeer({ ...msg.device, host: r.from }, msg.state, true);
+      for (const c of msg.commands ?? []) await runCommand(c);
+      const reply: SyncMessage = { device: myDevice(), state: snapshot(), commands: takeOutbox(msg.device.clientId) };
+      return { status: 200, contentType: "application/json", body: JSON.stringify(reply) };
+    }
     if (p === "/tonearm/call") {
       const { method, args } = JSON.parse(r.body || "{}") as { method: Routed; args: unknown[] };
       if (!ROUTED.includes(method)) return { status: 400, contentType: "text/plain", body: "unknown method" };
@@ -333,7 +364,80 @@ async function announce() {
   return port;
 }
 
-// ---- controlling ----------------------------------------------------------------------
+
+function myDevice(): Omit<Device, "host"> {
+  return {
+    name: deviceName(),
+    port: myPort,
+    clientId: clientId(),
+    product: PRODUCT,
+    deviceClass: isAndroid() ? "phone" : "pc",
+  };
+}
+
+let myPort = 32500;
+
+// ---- sync -----------------------------------------------------------------------------------
+
+interface Command {
+  method: Routed;
+  args: unknown[];
+}
+
+interface SyncMessage {
+  device: Omit<Device, "host">;
+  state: Snapshot;
+  commands: Command[];
+}
+
+/** Commands waiting for a device that we can't reach; it collects them when it syncs with us. */
+const outbox = new Map<string, Command[]>();
+
+function takeOutbox(id: string) {
+  const c = outbox.get(id) ?? [];
+  outbox.delete(id);
+  return c;
+}
+
+function patchPeer(id: string, patch: (p: Peer | undefined) => Peer | null | undefined) {
+  useRemote.setState((st) => {
+    const next = patch(st.peers[id]);
+    const peers = { ...st.peers };
+    if (next) peers[id] = next;
+    else delete peers[id];
+    return { peers };
+  });
+}
+
+function emptyPeer(d: Device): Peer {
+  return { device: d, state: null, stateAt: 0, session: null, reachable: false, lastSeen: 0 };
+}
+
+function receivePeer(d: Device, state: Snapshot | null, inbound: boolean) {
+  if (d.clientId === clientId()) return;
+  const now = Date.now();
+  patchPeer(d.clientId, (p) => {
+    const base = p ?? emptyPeer(d);
+    return {
+      ...base,
+      // Keep a known-good address: an inbound request's source address can be a NAT or VPN one.
+      device: { ...base.device, ...d, host: base.reachable && inbound ? base.device.host : d.host || base.device.host },
+      state: state ?? base.state,
+      stateAt: state ? now : base.stateAt,
+      lastSeen: now,
+    };
+  });
+  if (state) onPeerState(d.clientId);
+}
+
+async function runCommand(c: Command) {
+  if (!ROUTED.includes(c.method)) return;
+  try {
+    await local[c.method](...(c.args ?? []));
+  } catch (e) {
+    console.warn("remote command", c.method, e);
+  }
+}
 
 function base(d: Device) {
   return `http://${d.host.includes(":") ? `[${d.host}]` : d.host}:${d.port}`;
@@ -356,65 +460,194 @@ async function remoteFetch(d: Device, path: string, init: RequestInit = {}, time
   }
 }
 
-async function remoteState(d: Device, since = -1, wait = 0): Promise<Snapshot> {
-  const r = await remoteFetch(d, `/tonearm/state?since=${since}&wait=${wait}`, {}, (wait + 8) * 1000);
-  return r.json();
-}
+const lastTry = new Map<string, number>();
 
-async function callRemote(method: Routed, args: unknown[]) {
-  const d = useRemote.getState().target;
-  if (!d) return;
+async function syncWith(p: Peer) {
+  const id = p.device.clientId;
+  if (!p.device.host) return;
+  // Unreachable devices get a retry every 20 s; they may reach us instead.
+  if (!p.reachable && Date.now() - (lastTry.get(id) ?? 0) < 20_000) return;
+  lastTry.set(id, Date.now());
+  const commands = takeOutbox(id);
+  const msg: SyncMessage = { device: myDevice(), state: snapshot(), commands };
   try {
-    await remoteFetch(d, "/tonearm/call", { method: "POST", body: JSON.stringify({ method, args }) }, 15000);
-  } catch (e) {
-    toast(`Couldn't reach ${d.name}: ${e}`, { error: true });
+    const r = await remoteFetch(p.device, "/tonearm/sync", { method: "POST", body: JSON.stringify(msg) }, 4000);
+    const reply = (await r.json()) as SyncMessage;
+    patchPeer(id, (cur) => (cur ? { ...cur, reachable: true } : cur));
+    receivePeer({ ...reply.device, host: p.device.host }, reply.state, false);
+    for (const c of reply.commands ?? []) await runCommand(c);
+  } catch {
+    // Not delivered: keep the commands for when the device syncs with us.
+    if (commands.length) outbox.set(id, [...commands, ...(outbox.get(id) ?? [])]);
+    patchPeer(id, (cur) => (cur ? { ...cur, reachable: false } : cur));
   }
 }
 
-/** Tonearm devices on the network (and ones the Plex server says are playing). */
+let syncing = false;
+let syncAgain = false;
+
+async function syncAll() {
+  if (syncing) {
+    syncAgain = true;
+    return;
+  }
+  syncing = true;
+  try {
+    do {
+      syncAgain = false;
+      await Promise.all(Object.values(useRemote.getState().peers).map(syncWith));
+    } while (syncAgain);
+  } finally {
+    syncing = false;
+  }
+}
+
+let soon = 0;
+/** Sync shortly (batches bursts of state changes). */
+function syncSoon() {
+  clearTimeout(soon);
+  soon = window.setTimeout(() => void syncAll(), 250);
+}
+
+/** Tonearm devices on the network, plus anything the Plex server says is playing. */
 export async function discover() {
   useRemote.setState({ scanning: true });
-  const me = clientId();
-  const found = new Map<string, Device>();
-  const gdm = await invoke<Device[]>("remote_discover", { ms: 1500 }).catch(() => [] as Device[]);
-  for (const d of gdm) if (d.product === PRODUCT && d.clientId !== me) found.set(d.clientId, d);
-  // Players the server knows about, in case multicast doesn't get through (Wi-Fi isolation etc.).
   try {
-    const c = await server().container("/status/sessions");
-    for (const m of c.Metadata ?? []) {
-      const pl = m.Player;
-      if (pl?.product === PRODUCT && pl.machineIdentifier !== me && !found.has(pl.machineIdentifier) && pl.address) {
-        found.set(pl.machineIdentifier, {
-          name: pl.title || pl.device || "Tonearm",
-          host: pl.address,
-          port: 32500,
-          clientId: pl.machineIdentifier,
-          product: PRODUCT,
-          deviceClass: "",
-        });
+    const me = clientId();
+    const gdm = await invoke<Device[]>("remote_discover", { ms: 1200 }).catch(() => [] as Device[]);
+    for (const d of gdm) {
+      if (d.product === PRODUCT && d.clientId !== me) {
+        patchPeer(d.clientId, (p) => ({ ...(p ?? emptyPeer(d)), device: { ...(p?.device ?? d), ...d }, lastSeen: Date.now() }));
       }
     }
-  } catch {
-    /* the device list just has fewer entries */
+    await refreshSessions();
+    await syncAll();
+  } finally {
+    useRemote.setState({ scanning: false });
   }
-  const devices = await Promise.all(
-    [...found.values()].map(async (d) => {
-      try {
-        const s = await remoteState(d);
-        const t = s.loaded ? s.queue[s.index]?.track : undefined;
-        return { ...d, nowPlaying: t ? { title: t.title, artist: t.artist, paused: s.paused } : undefined };
-      } catch {
-        return null;
-      }
-    }),
-  );
-  const list = devices.filter((d): d is Device & { nowPlaying: Device["nowPlaying"] } => !!d);
-  useRemote.setState({ devices: list, scanning: false });
-  return list;
 }
 
+/** Plex's view of every player on the account: track and position, no LAN needed. */
+async function refreshSessions() {
+  const me = clientId();
+  let c: any;
+  try {
+    c = await server().container("/status/sessions");
+  } catch {
+    return;
+  }
+  const seen = new Set<string>();
+  for (const m of c.Metadata ?? []) {
+    const pl = m.Player;
+    if (!pl?.machineIdentifier || pl.machineIdentifier === me || m.type !== "track") continue;
+    seen.add(pl.machineIdentifier);
+    const d: Device = {
+      name: pl.title || pl.product || "Plex player",
+      host: pl.product === PRODUCT ? pl.address ?? "" : "",
+      port: 32500,
+      clientId: pl.machineIdentifier,
+      product: pl.product ?? "",
+      deviceClass: pl.platform === "Android" ? "phone" : "",
+    };
+    const session = { track: toTrack(m), position: (m.viewOffset ?? 0) / 1000, playing: pl.state === "playing", at: Date.now() };
+    patchPeer(d.clientId, (p) => ({
+      ...(p ?? emptyPeer(d)),
+      device: p ? { ...p.device, host: p.device.host || d.host } : d,
+      session,
+      lastSeen: Date.now(),
+    }));
+  }
+  for (const [id, p] of Object.entries(useRemote.getState().peers)) {
+    if (!seen.has(id) && p.session) patchPeer(id, (cur) => (cur ? { ...cur, session: null } : cur));
+  }
+}
+
+// ---- what's playing where ------------------------------------------------------------------------
+
+export interface NowPlaying {
+  track: Track;
+  position: number;
+  duration: number;
+  playing: boolean;
+  /** The full queue, when the device synced it to us. */
+  queue: Track[] | null;
+  index: number;
+  /** Whether we can send it commands (it's a Tonearm we sync with). */
+  controllable: boolean;
+}
+
+const FRESH_MS = 15_000;
+
+/** A peer's playback right now, extrapolating the position from when it was reported. */
+export function nowPlaying(p: Peer): NowPlaying | null {
+  const now = Date.now();
+  const st = p.state && now - p.stateAt < FRESH_MS ? p.state : null;
+  if (st?.loaded && st.queue[st.index]) {
+    const playing = !st.paused && !st.buffering;
+    const position = Math.min(st.duration || Infinity, st.position + (playing ? (now - p.stateAt) / 1000 : 0));
+    return {
+      track: st.queue[st.index].track,
+      position,
+      duration: st.duration,
+      playing,
+      queue: st.queue.map((q) => q.track),
+      index: st.index,
+      controllable: true,
+    };
+  }
+  if (p.session && now - p.session.at < 60_000) {
+    const s = p.session;
+    const duration = s.track.duration / 1000;
+    return {
+      track: s.track,
+      position: Math.min(duration, s.position + (s.playing ? (now - s.at) / 1000 : 0)),
+      duration,
+      playing: s.playing,
+      queue: null,
+      index: 0,
+      controllable: p.device.product === PRODUCT && (!!st || p.reachable),
+    };
+  }
+  return null;
+}
+
+/** Send a command to a device: directly when we can reach it, otherwise via its next sync. */
+export function sendCommand(id: string, method: Routed, args: unknown[] = []) {
+  outbox.set(id, [...(outbox.get(id) ?? []), { method, args }]);
+  syncSoon();
+}
+
+/** Bring another device's music here, carrying on from the same track, queue and position. */
+export async function playHere(id: string) {
+  const p = useRemote.getState().peers[id];
+  const np = p && nowPlaying(p);
+  if (!np) return;
+  if (useRemote.getState().target) await disconnect();
+  if (np.controllable) sendCommand(id, "pause");
+  const tracks = np.queue ?? [np.track];
+  await local.playTracks(tracks, np.index, { shuffle: false, at: np.position });
+  toast(`Playing here from ${fmtTime(np.position)}`);
+}
+
+/** Send this device's music to another Tonearm and control it from here. */
+export async function playThere(id: string) {
+  const p = useRemote.getState().peers[id];
+  if (!p) return;
+  const s = usePlayer.getState();
+  if (s.loaded && s.queue.length) {
+    const tracks = s.queue.map((q) => q.track);
+    const at = s.position;
+    const paused = s.paused;
+    await local.stop();
+    sendCommand(id, "playTracks", [tracks, s.index, { shuffle: false, at }]);
+    if (paused) sendCommand(id, "pause");
+  }
+  await control(id);
+}
+
+// ---- controlling ----------------------------------------------------------------------------
+
 let localSnapshot: Partial<ReturnType<typeof usePlayer.getState>> | null = null;
-let pollGen = 0;
 
 function mirror(s: Snapshot) {
   usePlayer.setState({
@@ -434,123 +667,57 @@ function mirror(s: Snapshot) {
   });
 }
 
-async function pollLoop(d: Device, gen: number) {
-  let since = -1;
-  let failures = 0;
-  while (gen === pollGen) {
-    try {
-      const s = await remoteState(d, since, since < 0 ? 0 : 20);
-      if (gen !== pollGen) return;
-      failures = 0;
-      since = s.version;
-      mirror(s);
-    } catch {
-      if (gen !== pollGen) return;
-      if (++failures >= 3) {
-        toast(`Lost connection to ${d.name}`, { error: true });
-        disconnect();
-        return;
-      }
-      await new Promise((r) => setTimeout(r, 1500));
-    }
-  }
-}
-
-/**
- * Starts controlling `d`. If music is playing here, it moves to `d` and carries on from the
- * same point; otherwise `d` keeps playing whatever it was.
- */
-export async function connect(d: Device) {
-  const cur = useRemote.getState().target;
-  if (cur?.clientId === d.clientId) return;
-  if (cur) disconnect();
+/** Mirror another device here: the player bar, queue and controls all act on it. */
+export async function control(id: string) {
+  const p = useRemote.getState().peers[id];
+  if (!p || useRemote.getState().target?.clientId === id) return;
+  if (useRemote.getState().target) await disconnect();
   const s = usePlayer.getState();
-  const playingHere = s.loaded && !s.paused && s.queue.length > 0;
   localSnapshot = { queue: s.queue, original: s.original, index: s.index, position: s.position, shuffle: s.shuffle, repeat: s.repeat, volume: s.volume, muted: s.muted };
-  if (playingHere) {
-    const tracks = s.queue.map((q) => q.track);
-    const at = s.position;
-    await local.stop();
-    useRemote.setState({ target: d });
-    playerFlags.remote = true;
-    await callRemote("playTracks", [tracks, s.index, { shuffle: false, at }]);
-  } else {
-    if (s.loaded) await local.stop();
-    useRemote.setState({ target: d });
-    playerFlags.remote = true;
-  }
-  toast(`Controlling ${d.name}`);
-  void pollLoop(d, ++pollGen);
+  if (s.loaded) await local.stop();
+  useRemote.setState({ target: p.device });
+  playerFlags.remote = true;
+  if (p.state) mirror(p.state);
+  syncSoon();
 }
 
-/** Stops controlling the remote device. With `takeOver`, its music moves here. */
+/** Stop controlling the other device. With `takeOver`, its music moves here. */
 export async function disconnect(takeOver = false) {
   const d = useRemote.getState().target;
   if (!d) return;
-  pollGen++;
-  let carry: Snapshot | null = null;
-  if (takeOver) {
-    try {
-      carry = await remoteState(d);
-      await callRemote("pause", []);
-    } catch {
-      carry = null;
-    }
-  }
+  const p = useRemote.getState().peers[d.clientId];
+  const np = takeOver && p ? nowPlaying(p) : null;
   useRemote.setState({ target: null });
   playerFlags.remote = false;
   usePlayer.setState({ ...(localSnapshot ?? {}), loaded: false, paused: true, buffering: false });
   localSnapshot = null;
-  if (carry && carry.queue.length) {
-    await local.playTracks(
-      carry.queue.map((q) => q.track),
-      carry.index,
-      { shuffle: false, at: carry.position },
-    );
+  if (np) {
+    sendCommand(d.clientId, "pause");
+    await local.playTracks(np.queue ?? [np.track], np.index, { shuffle: false, at: np.position });
   }
 }
 
-const offered = new Set<string>();
-
-/** If another Tonearm is playing and this one isn't, offer to control it. */
-async function lookForPlayback() {
+/** New state from a peer: update the mirror, and yield if it started playing after us. */
+function onPeerState(id: string) {
+  const p = useRemote.getState().peers[id];
+  if (!p?.state) return;
+  if (useRemote.getState().target?.clientId === id) mirror(p.state);
   const s = usePlayer.getState();
-  if (useRemote.getState().target || (s.loaded && !s.paused)) return;
-  const devices = await discover().catch(() => []);
-  for (const d of devices) {
-    if (d.nowPlaying && !d.nowPlaying.paused && !offered.has(d.clientId)) {
-      offered.add(d.clientId);
-      toast(`“${d.nowPlaying.title}” is playing on ${d.name}`, { action: { label: "Control it", run: () => connect(d) } });
-      return;
-    }
+  const here = s.loaded && !s.paused && !playerFlags.remote;
+  const there = p.state.loaded && !p.state.paused;
+  if (here && there && useSettings.getState().exclusivePlayback && p.state.playingSince > playingSince) {
+    void local.pause();
+    toast(`Paused here: now playing on ${p.device.name}`, { action: { label: "Control it", run: () => void control(id) } });
   }
 }
 
 // ---- one device at a time ---------------------------------------------------------------
 //
-// Starting playback here pauses any other Tonearm on the account. Two paths, so it works even
-// when a firewall blocks one direction: this device asks the others to pause directly, and every
-// playing device watches the Plex server's session list and pauses itself when another Tonearm
-// starts playing after it did. The device that started last wins.
-
-/** Other Tonearm devices the Plex server currently has sessions for, and whether they're playing. */
-async function tonearmSessions() {
-  const me = clientId();
-  const c = await server().container("/status/sessions");
-  const out: { device: Device; playing: boolean }[] = [];
-  for (const m of c.Metadata ?? []) {
-    const pl = m.Player;
-    if (pl?.product !== PRODUCT || !pl.machineIdentifier || pl.machineIdentifier === me) continue;
-    out.push({
-      device: { name: pl.title || "another device", host: pl.address ?? "", port: 32500, clientId: pl.machineIdentifier, product: PRODUCT, deviceClass: "" },
-      playing: pl.state === "playing",
-    });
-  }
-  return out;
-}
+// Starting playback here pauses every other Tonearm on the account: through the sync channel
+// when there is one, and otherwise each playing device watches the Plex session list and pauses
+// itself when another Tonearm starts after it did. The device that started last wins.
 
 let wasPlaying = false;
-/** Which other devices were playing at the last look. */
 let othersPlaying = new Map<string, boolean>();
 
 function playingHere() {
@@ -558,41 +725,37 @@ function playingHere() {
   return s.loaded && !s.paused && !playerFlags.remote;
 }
 
-async function pauseOthers() {
-  const sessions = await tonearmSessions().catch(() => []);
-  othersPlaying = new Map(sessions.map((x) => [x.device.clientId, x.playing]));
-  for (const { device, playing } of sessions) {
-    if (!playing || !device.host) continue;
-    remoteFetch(device, "/tonearm/call", { method: "POST", body: JSON.stringify({ method: "pause", args: [] }) }, 4000).catch(
-      () => undefined, // its own session check will pause it
-    );
+function pauseOthers() {
+  for (const [id, p] of Object.entries(useRemote.getState().peers)) {
+    const np = nowPlaying(p);
+    if (np?.playing && np.controllable) sendCommand(id, "pause");
   }
 }
 
 async function yieldToNewerDevice() {
   if (!playingHere()) return;
-  const sessions = await tonearmSessions().catch(() => null);
-  if (!sessions || !playingHere()) return;
-  const started = sessions.find((x) => x.playing && !othersPlaying.get(x.device.clientId));
-  othersPlaying = new Map(sessions.map((x) => [x.device.clientId, x.playing]));
+  await refreshSessions();
+  if (!playingHere()) return;
+  const peers = Object.values(useRemote.getState().peers).filter((p) => p.device.product === PRODUCT && p.session);
+  const started = peers.find((p) => p.session!.playing && !othersPlaying.get(p.device.clientId));
+  othersPlaying = new Map(peers.map((p) => [p.device.clientId, p.session!.playing]));
   if (started) {
     await local.pause();
-    toast(`Paused here: now playing on ${started.device.name}`, { action: { label: "Control it", run: () => void discover().then((ds) => {
-      const d = ds.find((x) => x.clientId === started.device.clientId) ?? started.device;
-      return connect(d);
-    }) } });
+    toast(`Paused here: now playing on ${started.device.name}`, { action: { label: "Control it", run: () => void control(started.device.clientId) } });
   }
 }
 
 function watchExclusive() {
   usePlayer.subscribe(() => {
     const now = playingHere();
-    if (now && !wasPlaying && useSettings.getState().exclusivePlayback) void pauseOthers();
+    if (now && !wasPlaying) {
+      othersPlaying = new Map(
+        Object.values(useRemote.getState().peers).map((p) => [p.device.clientId, !!p.session?.playing]),
+      );
+      if (useSettings.getState().exclusivePlayback) pauseOthers();
+    }
     wasPlaying = now;
   });
-  setInterval(() => {
-    if (useSettings.getState().exclusivePlayback) void yieldToNewerDevice();
-  }, 5000);
 }
 
 // ---- setup --------------------------------------------------------------------------------
@@ -601,7 +764,11 @@ export async function initRemote() {
   for (const m of ROUTED) {
     const orig = (player as any)[m] as (...a: any[]) => any;
     local[m] = orig;
-    (player as any)[m] = (...args: any[]) => (useRemote.getState().target ? callRemote(m, args) : orig(...args));
+    (player as any)[m] = (...args: any[]) => {
+      const t = useRemote.getState().target;
+      if (!t) return orig(...args);
+      sendCommand(t.clientId, m, args);
+    };
   }
   watchState();
   watchExclusive();
@@ -616,8 +783,30 @@ export async function initRemote() {
     }
     void invoke("remote_reply", { reply: { id: r.id, ...reply } });
   });
-  await announce();
+  myPort = (await announce()) || 32500;
   useSettings.subscribe((s, p) => s.deviceName !== p.deviceName && void announce());
-  setTimeout(() => void lookForPlayback(), 3000);
-  setInterval(() => void lookForPlayback(), 90_000);
+  // Changes here reach the others straight away; otherwise sync briskly while anything plays.
+  usePlayer.subscribe((s, p) => {
+    if (s.queue !== p.queue || s.index !== p.index || s.paused !== p.paused || s.loaded !== p.loaded) syncSoon();
+  });
+  const tick = () => {
+    const anyPlaying =
+      playingHere() || Object.values(useRemote.getState().peers).some((p) => nowPlaying(p)?.playing) || !!useRemote.getState().target;
+    void syncAll();
+    setTimeout(tick, anyPlaying ? 2000 : 8000);
+  };
+  setTimeout(tick, 1500);
+  setTimeout(() => void discover(), 1000);
+  setInterval(() => void discover(), 60_000);
+  setInterval(() => {
+    void refreshSessions();
+    if (useSettings.getState().exclusivePlayback) void yieldToNewerDevice();
+  }, 5000);
+  // Forget devices we haven't heard from in a while.
+  setInterval(() => {
+    const now = Date.now();
+    for (const [id, p] of Object.entries(useRemote.getState().peers)) {
+      if (now - p.lastSeen > 5 * 60_000 && useRemote.getState().target?.clientId !== id) patchPeer(id, () => null);
+    }
+  }, 60_000);
 }

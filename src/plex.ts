@@ -4,7 +4,7 @@
 import { fetch } from "@tauri-apps/plugin-http";
 
 export const PRODUCT = "Tonearm";
-export const VERSION = "0.1.1";
+export const VERSION = "0.1.2";
 
 export function clientId(): string {
   let id = localStorage.getItem("tonearm.clientId");

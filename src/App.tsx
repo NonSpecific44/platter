@@ -4,6 +4,10 @@ import { findConnection, getServers, plexHeaders } from "./plex";
 import { initPlayer, offerHandoff, player, usePlayer } from "./player";
 import { refreshLibrary, startLive } from "./live";
 import { initRemote } from "./remote";
+import { DevicesSheet } from "./components/Devices";
+import { LibraryView, PhoneBar, PhoneNav, PhoneNowPlaying, SearchView } from "./components/Phone";
+import { isAndroid, useIsPhone } from "./platform";
+import { initBackButton } from "./backButton";
 import { startUpdateChecks } from "./updates";
 import { server, toast, useNav, useSession, useSettings } from "./store";
 import { setLoved, ratingOf, usePlaylists } from "./actions";
@@ -217,6 +221,12 @@ function CurrentView() {
     case "settings":
       body = <SettingsView />;
       break;
+    case "library":
+      body = <LibraryView tab={v.tab} />;
+      break;
+    case "search":
+      body = <SearchView />;
+      break;
   }
   return (
     <main className="main" ref={ref} key={key}>
@@ -249,8 +259,10 @@ function Main() {
   const panel = useNav((s) => s.panel);
   const mini = useNav((s) => s.mini);
   const collapsed = useSettings((s) => s.sidebarCollapsed);
+  const phone = useIsPhone();
   useShortcuts();
   useEffect(() => {
+    if (isAndroid()) initBackButton();
     initPlayer();
     restoreSaneSize();
     ensureConnection().then(() => {
@@ -264,6 +276,15 @@ function Main() {
   }, []);
 
   if (mini) return <MiniPlayer />;
+  if (phone)
+    return (
+      <div className="app phone">
+        <CurrentView />
+        <PhoneBar />
+        <PhoneNav />
+        <PhoneNowPlaying />
+      </div>
+    );
   return (
     <div className={`app ${panel !== "none" ? "with-panel" : ""} ${collapsed ? "side-collapsed" : ""}`}>
       <Sidebar />
@@ -287,6 +308,7 @@ export default function App() {
       <ContextMenu />
       <PromptModal />
       <HelpModal />
+      <DevicesSheet />
       <Toasts />
     </>
   );

@@ -180,7 +180,9 @@ export type View =
   | { kind: "playlists" }
   | { kind: "playlist"; id: string }
   | { kind: "queue" }
-  | { kind: "settings" };
+  | { kind: "settings" }
+  | { kind: "library"; tab?: "playlists" | "artists" | "albums" }
+  | { kind: "search" };
 
 interface NavState {
   stack: View[];

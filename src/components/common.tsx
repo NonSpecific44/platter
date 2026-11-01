@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Disc3, Heart, Music, Play, User, X } from "l
 import { Album, Artist, Playlist, Track } from "../plex";
 import { player, usePlayer } from "../player";
 import { MenuItem, fmtTime, openMenu, server, useMenu, useNav, useToasts } from "../store";
-import { isAndroid } from "../platform";
+import { isAndroid, isPhone } from "../platform";
 import { attachShelfWheel, pageStride, smoothScrollBy } from "../smooth";
 import { albumMenu, playAlbum, playArtist, setLoved, trackMenu, usePrompt, useRatings } from "../actions";
 
@@ -372,13 +372,19 @@ function MenuList({ items, x, y, onClose }: { items: MenuItem[]; x: number; y: n
             key={i}
             className={`menu-item ${it.danger ? "danger" : ""} ${it.disabled ? "disabled" : ""}`}
             onMouseEnter={(e) => {
+              if (isPhone()) return;
               if (it.submenu) {
                 const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
                 setSub({ i, x: r.right - 2, y: r.top - 4 });
               } else setSub(null);
             }}
             onClick={() => {
-              if (it.submenu || it.disabled) return;
+              if (it.disabled) return;
+              // Touch screens drill into submenus in place.
+              if (it.submenu) {
+                if (isPhone()) useMenu.setState({ items: it.submenu });
+                return;
+              }
               onClose();
               it.run?.();
             }}

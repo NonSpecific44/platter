@@ -22,12 +22,16 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 **Autoplay**
 - When the queue runs out, Tonearm keeps going with similar music. It uses Plex's sonic analysis when available, then tracks by the same and similar artists, then the rest of your library. Turn it off in Settings → Playback.
 
-**Remote control**
-- The devices button in the player bar lists other Tonearms on your network. Pick one to control it: the player bar, queue and lyrics follow that device.
-- If music is playing on this device, picking another one moves playback there and continues from the same point. "Move playback to this device" brings it back.
-- When another Tonearm is already playing, Tonearm offers to control it.
+**Devices (like Spotify Connect)**
+- Every Tonearm on your account shows what your other devices are playing, with live progress. A "Listening on …" bar appears when music is playing somewhere else.
+- **Play here** carries on with the same queue, track and position on this device and pauses the other one.
+- The devices button lists your devices. Pick one to send your music there and control it from here; the player bar, queue and lyrics follow that device.
 - One device plays at a time: starting music on one pauses Tonearm everywhere else (Settings → Playback).
-- Uses the Plex Companion protocol (HTTP on port 32500) and GDM discovery, so Plex apps can also see and control Tonearm.
+- Devices exchange their state every couple of seconds over the LAN. One working direction is enough, so a firewall on one side doesn't break it. Without any LAN link, Tonearm falls back to your Plex server's list of active sessions, which also shows other Plex apps.
+- Speaks the Plex Companion protocol (HTTP on port 32500) with GDM discovery, so Plex apps can also see and control Tonearm.
+
+**Android**
+- Spotify-style layout: Home, Search and Your Library tabs, a mini player, full-screen Now Playing, and bottom-sheet menus. The back button works through pages and overlays.
 
 **Desktop**
 - MPRIS (media keys, KDE/GNOME media controls), track-change notifications, tray icon, close to tray
