@@ -14,7 +14,7 @@ import { fetch } from "@tauri-apps/plugin-http";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast, useSettings } from "./store";
 
-const REPO = "NonSpecific44/tonearm-plex-music-player";
+const REPO = "NonSpecific44/platter";
 const CHECK_EVERY_MS = 6 * 60 * 60_000;
 
 interface Asset {

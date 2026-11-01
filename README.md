@@ -75,7 +75,7 @@ Platter checks GitHub for new releases (Settings → Updates).
 - **Android:** downloads the new APK and opens the installer.
 - **Arch package:** links to the release page.
 
-While the repository is private, the app needs a GitHub token to see releases. Create a fine-grained personal access token with read-only **Contents** access to this repository only, and paste it into Settings → Updates.
+Updates work without any setup while the repository is public. If it is ever made private, the app needs a GitHub token to see releases: create a fine-grained personal access token with read-only **Contents** access to this repository only, and paste it into Settings → Updates.
 
 ### Publishing a release
 
