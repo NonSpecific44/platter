@@ -225,6 +225,13 @@ input[type="color"] { width: 44px; height: 30px; border: none; background: none;
 .shelf-head { gap: 12px; }
 .shelf-nav { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .shelf-nav .link { margin-right: 8px; }
+.shelf-nav .icon-btn.shelf-action { display: inline-flex; margin-right: 8px; }
+.section-head h2 { margin-bottom: 0; }
+.phone-section .section-head, .phone-section-head { margin: 16px 0 4px; min-height: 0; }
+.phone-section .section-head h2, .phone-section-head h2 { margin: 0; }
+.shelf-filter { margin-bottom: 12px; }
+.shelf-filter:empty { display: none; }
+.shelf-filter .filter, .shelf-filter .filter input { width: 100%; }
 
 /* ---- hero ---- */
 .hero { position: relative; display: flex; align-items: flex-end; gap: 26px; margin: -26px -32px 22px; padding: 40px 32px 24px; overflow: hidden; }

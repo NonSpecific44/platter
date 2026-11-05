@@ -26,7 +26,7 @@ import { SidePanel } from "./components/Panels";
 import { NowPlaying } from "./components/NowPlaying";
 import { Palette } from "./components/Palette";
 import { ContextMenu, Cover, HelpModal, PromptModal, Toasts } from "./components/common";
-import { Albums, Artists, Home, Playlists } from "./views/Library";
+import { Albums, Artists, Home, Playlists, ShelfView } from "./views/Library";
 import { AlbumView, ArtistView, PlaylistView } from "./views/Detail";
 import { QueueView, SettingsView } from "./views/Settings";
 
@@ -233,6 +233,9 @@ function CurrentView() {
       break;
     case "search":
       body = <SearchView />;
+      break;
+    case "shelf":
+      body = <ShelfView v={v} />;
       break;
     case "local":
       body = <LocalView tab={v.tab} />;

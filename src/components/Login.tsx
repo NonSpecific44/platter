@@ -106,7 +106,7 @@ export function PickServer() {
     setBusy(r.clientIdentifier);
     setError(null);
     try {
-      const c = await bestConnection(r.connections, r.accessToken);
+      const c = await bestConnection(r.connections, r.clientIdentifier, r.accessToken);
       if (!c) throw new Error(`Couldn't reach ${r.name} on any of its addresses`);
       set({
         server: { uri: c.uri, token: r.accessToken, machineId: r.clientIdentifier, name: r.name, local: c.local, connections: r.connections },

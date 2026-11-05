@@ -57,7 +57,11 @@ export function initBackButton() {
 
 /** Tells the Android side what it needs to run without the UI (Android Auto) and listens to it. */
 export function initAndroid() {
-  onNative("network", () => void ensureConnection());
+  onNative("network", () => {
+    void ensureConnection();
+    // A network that has only just appeared often can't reach anything yet.
+    setTimeout(() => void ensureConnection(), 5000);
+  });
   onNative<string>("output", setOutputName);
   const push = () => {
     const { server, section } = useSession.getState();

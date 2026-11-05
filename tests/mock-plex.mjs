@@ -13,7 +13,7 @@ const album = (i) => ({ type: "album", ratingKey: String(100 + i), title: albumN
 const artist = (i) => ({ type: "artist", ratingKey: String(10 + i), title: artists[i % 10] + (i >= 10 ? ` ${i}` : ""), thumb: `/thumb/${i + 50}`, Similar: [{ tag: artists[(i + 1) % 10] }] });
 const track = (i) => ({
   type: "track", ratingKey: String(1000 + i), title: titles[i % 10] + (i >= 10 ? ` ${i}` : ""), grandparentTitle: artists[i % 10], grandparentRatingKey: String(10 + (i % 10)),
-  parentTitle: albumNames[i % 10], parentRatingKey: String(100 + (i % 10)), parentThumb: `/thumb/${i % 10}`, duration: SECONDS * 1000, index: (i % 10) + 1, parentIndex: 1,
+  parentTitle: albumNames[i % 10], parentRatingKey: String(100 + (i % 10)), parentThumb: `/thumb/${i % 10}`, duration: SECONDS * 1000, index: (i % 10) + 1, parentIndex: 1, ratingCount: 1000 - i,
   Media: [{ audioCodec: i % 2 ? "mp3" : "flac", bitrate: 900, Part: [{ key: `/library/parts/${1000 + i}/file.wav`, Stream: [{ streamType: 2, id: 5000 + i, gain: "-6.5", albumGain: "-5" }] }] }],
 });
 const mc = (o) => ({ MediaContainer: o });
@@ -36,21 +36,33 @@ const lidarrAlbum = { foreignAlbumId: "mb-r1", title: "Requested Album", release
 function route(p, q, req, body) {
   if (p === "/identity") return mc({ machineIdentifier: "mock", version: "1" });
   if (p.startsWith("/hubs/sections")) return mc({ Hub: [
-    { hubIdentifier: "recent", title: "Recently added", type: "album", Metadata: [...Array(12)].map((_, i) => album(i)) },
-    { hubIdentifier: "artists", title: "Artists you love", type: "artist", Metadata: [...Array(10)].map((_, i) => artist(i)) },
+    { hubIdentifier: "recent", title: "Recently added", type: "album", key: "/hubs/home/recentlyAdded?type=9", more: true, Metadata: [...Array(12)].map((_, i) => album(i)) },
+    { hubIdentifier: "artists", title: "Artists you love", type: "artist", key: "/library/sections/1/all?type=8", more: true, Metadata: [...Array(10)].map((_, i) => artist(i)) },
+    { hubIdentifier: "songs", title: "Songs you love", type: "track", key: "/library/sections/1/all?type=10", more: true, Metadata: [...Array(8)].map((_, i) => track(i)) },
+    { hubIdentifier: "nokey", title: "No listing", type: "album", Metadata: [...Array(3)].map((_, i) => album(i)) },
     { hubIdentifier: "more", title: "More in Electronic", type: "album", Metadata: [...Array(8)].map((_, i) => album(i + 3)) },
   ] });
-  if (p.startsWith("/hubs/search")) return mc({ Hub: [
-    { hubIdentifier: "t", title: "Tracks", type: "track", Metadata: [0, 1, 2, 3].map(track) },
-    { hubIdentifier: "a", title: "Artists", type: "artist", Metadata: [0, 1].map(artist) },
-    { hubIdentifier: "al", title: "Albums", type: "album", Metadata: [0, 1, 2].map(album) },
-  ] });
+  if (p.startsWith("/hubs/home/recentlyAdded")) {
+    const start = +q.get("X-Plex-Container-Start") || 0;
+    const size = +q.get("X-Plex-Container-Size") || 50;
+    return mc({ totalSize: 700, Metadata: [...Array(700)].map((_, i) => album(i)).slice(start, start + size) });
+  }
+  if (p.startsWith("/hubs/search")) {
+    const limit = +q.get("limit") || 8;
+    const list = (n, f) => [...Array(Math.min(n, limit))].map((_, i) => f(i));
+    return mc({ Hub: [
+      { hubIdentifier: "t", title: "Tracks", type: "track", Metadata: list(30, track) },
+      { hubIdentifier: "a", title: "Artists", type: "artist", Metadata: list(2, artist) },
+      { hubIdentifier: "al", title: "Albums", type: "album", Metadata: list(20, album) },
+    ] });
+  }
   if (/^\/library\/sections\/\d+\/all/.test(p)) {
     const type = q.get("type");
     const n = type === "8" ? 40 : 60;
     const start = +q.get("X-Plex-Container-Start") || 0;
     const size = +q.get("X-Plex-Container-Size") || 50;
     const all = [...Array(n)].map((_, i) => (type === "8" ? artist(i) : type === "10" ? track(i) : album(i)));
+    if (q.get("sort") === "random") all.sort(() => Math.random() - 0.5);
     return mc({ totalSize: n, size: Math.min(size, n - start), Metadata: all.slice(start, start + size) });
   }
   if (p === "/playlists") return mc({ Metadata: ["Late night", "Running", "Focus"].map((t, i) => ({ type: "playlist", ratingKey: String(500 + i), title: t, leafCount: 10, duration: 400000, smart: 0 })) });
@@ -72,8 +84,8 @@ function route(p, q, req, body) {
   if (p === "/api/v1/rootfolder") return [{ path: "/music" }];
   if (p === "/api/v1/qualityprofile") return [{ id: 1, name: "Lossless" }];
   if (p === "/api/v1/metadataprofile") return [{ id: 2, name: "Standard" }];
-  if (p === "/api/v1/artist/lookup") return [lidarrArtist];
-  if (p === "/api/v1/album/lookup") return [lidarrAlbum];
+  if (p === "/api/v1/artist/lookup") return [...Array(8)].map((_, i) => ({ ...lidarrArtist, foreignArtistId: `mb-a${i}`, artistName: `Requested Artist ${i + 1}` }));
+  if (p === "/api/v1/album/lookup") return [...Array(15)].map((_, i) => ({ ...lidarrAlbum, foreignAlbumId: `mb-r${i}`, title: `Requested Album ${i + 1}` }));
   if ((p === "/api/v1/artist" || p === "/api/v1/album") && req.method === "POST") {
     console.log(`LIDARR ${p} key=${req.headers["x-api-key"]} ${body.slice(0, 300)}`);
     return { id: 7 };

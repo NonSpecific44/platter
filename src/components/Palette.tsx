@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Command, Disc3, ListMusic, Music, Search, User } from "lucide-react";
-import { Album, Artist, Hub, Playlist, Track } from "../plex";
+import { Album, Artist, Hub, Playlist, SEARCH_LIMIT, Track } from "../plex";
 import { player, usePlayer } from "../player";
 import { sectionKey, server, useNav, useSettings, View } from "../store";
 import { playAlbum } from "../actions";
@@ -49,7 +49,7 @@ function commands(): Entry[] {
   return list.map(([title, run]) => ({ key: `cmd:${title}`, kind: "command", title, run }));
 }
 
-function fromHubs(hubs: Hub[]): Entry[] {
+function fromHubs(hubs: Hub[], query: string): Entry[] {
   const go = useNav.getState().go;
   const out: Entry[] = [];
   for (const h of hubs) {
@@ -82,6 +82,10 @@ function fromHubs(hubs: Hub[]): Entry[] {
         out.push({ key: `pl:${p.ratingKey}`, kind: "playlist", title: p.title, sub: `Playlist · ${p.leafCount} tracks`, thumb: p.thumb, run: () => go({ kind: "playlist", id: p.ratingKey }) });
       }
     }
+    if (h.items.length >= SEARCH_LIMIT) {
+      const title = `${h.title} for “${query}”`;
+      out.push({ key: `all:${h.hubIdentifier}`, kind: "command", title: `Show all: ${title}`, run: () => go({ kind: "shelf", title, itemType: h.type, hub: h.hubIdentifier, search: query }) });
+    }
   }
   return out;
 }
@@ -112,7 +116,7 @@ export function Palette() {
     setLoading(true);
     const t = setTimeout(async () => {
       try {
-        setResults(fromHubs(await server().search(sectionKey(), q.trim())));
+        setResults(fromHubs(await server().search(sectionKey(), q.trim()), q.trim()));
       } catch {
         setResults([]);
       }

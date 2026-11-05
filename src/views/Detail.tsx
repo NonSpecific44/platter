@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Heart, ListEnd, ListStart, MoreHorizontal, Pencil, Play, Radio, Search, Shuffle, Trash2 } from "lucide-react";
+import { ChevronRight, Heart, ListEnd, ListStart, MoreHorizontal, Pencil, Play, Radio, Search, Shuffle, Trash2 } from "lucide-react";
 import { Album, Track, toTrack } from "../plex";
 import { player } from "../player";
 import { fmtDuration, openMenu, sectionKey, server, toast, useNav } from "../store";
@@ -57,7 +57,6 @@ export function ArtistView({ id }: { id: string }) {
   const albums = useData(`artistAlbums:${id}`, () => server().artistAlbums(id));
   const popular = useData(`popular:${id}`, () => server().popularTracks(sectionKey(), id));
   const go = useNav((s) => s.go);
-  const [showAllPopular, setShowAllPopular] = useState(false);
 
   if (artist.error) return <ErrorBox error={artist.error} retry={artist.reload} />;
   if (!artist.data) return <Loading />;
@@ -91,13 +90,23 @@ export function ArtistView({ id }: { id: string }) {
       <Summary text={a.summary} />
       {popular.data && popular.data.length > 0 && (
         <section className="section">
-          <h2>Popular</h2>
-          <TrackList tracks={showAllPopular ? popular.data : popular.data.slice(0, 5)} showCover numbered="position" showArtist={false} />
-          {popular.data.length > 5 && (
-            <button className="link" onClick={() => setShowAllPopular(!showAllPopular)}>
-              {showAllPopular ? "Show less" : "Show more"}
+          <div className="shelf-head section-head">
+            <h2>Popular</h2>
+            <button
+              className="link"
+              onClick={() =>
+                go({
+                  kind: "shelf",
+                  title: `Popular: ${a.title}`,
+                  itemType: "track",
+                  path: `/library/sections/${sectionKey()}/all?type=10&artist.id=${id}&sort=ratingCount:desc&group=title`,
+                })
+              }
+            >
+              Show all <ChevronRight size={14} />
             </button>
-          )}
+          </div>
+          <TrackList tracks={popular.data.slice(0, 5)} showCover numbered="position" showArtist={false} />
         </section>
       )}
       {albums.loading && <Loading />}

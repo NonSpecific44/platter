@@ -1,6 +1,6 @@
 // Ask Lidarr for music that isn't in the library yet.
 import { useEffect, useState } from "react";
-import { Check, Disc3, Loader2, Search, User } from "lucide-react";
+import { Check, ChevronRight, Disc3, Loader2, Search, User } from "lucide-react";
 import { LidarrAlbum, LidarrArtist, lidarrConfigured, lidarrImage, lookupAlbums, lookupArtists, requestAlbum, requestArtist } from "../lidarr";
 import { toast, useNav } from "../store";
 
@@ -14,17 +14,37 @@ function Art({ url, round }: { url?: string; round?: boolean }) {
   );
 }
 
+const ALBUMS_SHOWN = 12;
+const ARTISTS_SHOWN = 6;
+
+function SectionTitle({ title, hidden, onShowAll }: { title: string; hidden: boolean; onShowAll: () => void }) {
+  return (
+    <div className="shelf-head section-head phone-section-head">
+      <h2 className="phone-section-title">{title}</h2>
+      {hidden && (
+        <button className="link" onClick={onShowAll}>
+          Show all <ChevronRight size={14} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function RequestsView() {
   const go = useNav((s) => s.go);
   const [q, setQ] = useState("");
   const [albums, setAlbums] = useState<LidarrAlbum[]>([]);
   const [artists, setArtists] = useState<LidarrArtist[]>([]);
+  const [allAlbums, setAllAlbums] = useState(false);
+  const [allArtists, setAllArtists] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [requested, setRequested] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const term = q.trim();
+    setAllAlbums(false);
+    setAllArtists(false);
     if (term.length < 2 || !lidarrConfigured()) {
       setAlbums([]);
       setArtists([]);
@@ -36,8 +56,8 @@ export function RequestsView() {
       try {
         const [al, ar] = await Promise.all([lookupAlbums(term), lookupArtists(term)]);
         if (!live) return;
-        setAlbums(al.slice(0, 12));
-        setArtists(ar.slice(0, 6));
+        setAlbums(al);
+        setArtists(ar);
         setError(null);
       } catch (e) {
         if (live) setError(e instanceof Error ? e.message : String(e));
@@ -85,9 +105,9 @@ export function RequestsView() {
         {loading && <Loader2 className="spin" size={18} />}
       </div>
       {error && <p className="dim pad">{error}</p>}
-      {albums.length > 0 && <h2 className="phone-section-title">Albums</h2>}
+      {albums.length > 0 && <SectionTitle title="Albums" hidden={!allAlbums && albums.length > ALBUMS_SHOWN} onShowAll={() => setAllAlbums(true)} />}
       <div className="lrows">
-        {albums.map((a) => {
+        {(allAlbums ? albums : albums.slice(0, ALBUMS_SHOWN)).map((a) => {
           const done = requested.has(a.foreignAlbumId) || (!!a.id && !!a.monitored);
           return (
             <div className="lrow" key={a.foreignAlbumId}>
@@ -107,9 +127,9 @@ export function RequestsView() {
           );
         })}
       </div>
-      {artists.length > 0 && <h2 className="phone-section-title">Artists</h2>}
+      {artists.length > 0 && <SectionTitle title="Artists" hidden={!allArtists && artists.length > ARTISTS_SHOWN} onShowAll={() => setAllArtists(true)} />}
       <div className="lrows">
-        {artists.map((a) => {
+        {(allArtists ? artists : artists.slice(0, ARTISTS_SHOWN)).map((a) => {
           const done = requested.has(a.foreignArtistId) || !!a.id;
           return (
             <div className="lrow" key={a.foreignArtistId}>

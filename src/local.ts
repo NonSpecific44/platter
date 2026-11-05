@@ -343,7 +343,7 @@ setLocalProvider({
     return useLocal.getState().tracks.filter((t) => t.artistKey === key);
   },
   /** Local results, minus anything the Plex results already list. */
-  search(query, plex): Hub[] {
+  search(query, plex, limit): Hub[] {
     const q = norm(query);
     if (!q) return [];
     const { tracks, albums, artists } = useLocal.getState();
@@ -351,7 +351,7 @@ setLocalProvider({
     const plexAlbums = new Set(plex.filter((h) => h.type === "album").flatMap((h) => h.items.map((a) => norm(a.title))));
     const hubs: Hub[] = [];
     const add = (type: string, title: string, items: Hub["items"]) =>
-      items.length && hubs.push({ title, type, itemType: type, hubIdentifier: `local-${type}`, items: items.slice(0, 8) });
+      items.length && hubs.push({ title, type, itemType: type, hubIdentifier: `local-${type}`, items: items.slice(0, limit) });
     add("track", "Tracks on this device", tracks.filter((t) => norm(`${t.title} ${t.artist}`).includes(q) && !plexTracks.some((p) => localMatch(p)?.ratingKey === t.ratingKey)));
     add("album", "Albums on this device", albums.filter((a) => norm(`${a.title} ${a.artist}`).includes(q) && !plexAlbums.has(norm(a.title))));
     add("artist", "Artists on this device", artists.filter((a) => norm(a.title).includes(q)));
@@ -360,6 +360,6 @@ setLocalProvider({
   shelf(): Hub | null {
     const { albums } = useLocal.getState();
     if (!albums.length) return null;
-    return { title: "On this device", type: "album", itemType: "album", hubIdentifier: "local-albums", items: albums.slice(0, 16) };
+    return { title: "On this device", type: "album", itemType: "album", hubIdentifier: "local-albums", items: albums.slice(0, 16), more: albums.length > 16 };
   },
 });

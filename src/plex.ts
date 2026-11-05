@@ -8,7 +8,7 @@ import { isAndroid } from "./platform";
 export const PRODUCT = "Platter";
 /** Earlier versions called themselves Tonearm; they speak the same protocol. */
 export const isOurs = (product: string | undefined) => product === PRODUCT || product === "Tonearm";
-export const VERSION = "0.3.1";
+export const VERSION = "0.3.2";
 
 export function clientId(): string {
   let id = localStorage.getItem("tonearm.clientId");
@@ -82,6 +82,8 @@ export interface Connection {
   local: boolean;
   relay: boolean;
   protocol: string;
+  address?: string;
+  port?: number;
 }
 export interface Resource {
   name: string;
@@ -171,7 +173,14 @@ export interface Hub {
   hubIdentifier: string;
   items: (Album | Artist | Track | Playlist)[];
   itemType: string;
+  /** Plex's address for the hub's full listing. */
+  path?: string;
+  /** The hub has more items than it came with. */
+  more?: boolean;
 }
+
+/** How many results a search returns per type, unless asked for more. */
+export const SEARCH_LIMIT = 8;
 
 const tags = (xs?: { tag: string }[]) => xs?.map((x) => x.tag);
 
@@ -273,7 +282,7 @@ export interface LocalProvider {
   artist(key: string): Artist;
   artistAlbums(key: string): Album[];
   artistTracks(key: string): Track[];
-  search(query: string, plex: Hub[]): Hub[];
+  search(query: string, plex: Hub[], limit: number): Hub[];
   shelf(): Hub | null;
 }
 
@@ -396,6 +405,8 @@ export class Server {
           hubIdentifier: h.hubIdentifier,
           itemType: h.Metadata[0]?.type ?? h.type,
           items: h.Metadata.map(convert),
+          path: h.key?.startsWith("/") ? h.key : undefined,
+          more: !!h.more,
         }));
     } catch (e) {
       // Offline: what's on this device still works.
@@ -403,6 +414,15 @@ export class Server {
       hubs = [];
     }
     return shelf ? [shelf, ...hubs] : hubs;
+  }
+
+  /** One page of a hub's full listing. */
+  async hubItems(path: string, start: number, size: number) {
+    const c = await this.container(path, { "X-Plex-Container-Start": start, "X-Plex-Container-Size": size });
+    const hub = c.Hub?.[0];
+    const items = ((c.Metadata ?? hub?.Metadata ?? []) as any[]).map(convert);
+    // Not every listing reports a total, and then there's no telling whether a next page exists.
+    return { items, total: (c.totalSize ?? hub?.totalSize ?? start + items.length) as number };
   }
 
   async randomAlbums(section: string, count: number) {
@@ -511,18 +531,18 @@ export class Server {
     return this.request(`/playlists/${id}`, { title }, "PUT");
   }
 
-  async search(section: string, query: string): Promise<Hub[]> {
+  async search(section: string, query: string, limit = SEARCH_LIMIT): Promise<Hub[]> {
     let plex: Hub[] = [];
     try {
-      plex = await this.plexSearch(section, query);
+      plex = await this.plexSearch(section, query, limit);
     } catch (e) {
       if (!local) throw e;
     }
-    return [...(local?.search(query, plex) ?? []), ...plex];
+    return [...(local?.search(query, plex, limit) ?? []), ...plex];
   }
 
-  private async plexSearch(section: string, query: string): Promise<Hub[]> {
-    const c = await this.container("/hubs/search", { query, sectionId: section, limit: 8 });
+  private async plexSearch(section: string, query: string, limit: number): Promise<Hub[]> {
+    const c = await this.container("/hubs/search", { query, sectionId: section, limit });
     return (c.Hub ?? [])
       .filter((h: any) => h.Metadata?.length && ["artist", "album", "track", "playlist"].includes(h.type))
       .map((h: any) => ({

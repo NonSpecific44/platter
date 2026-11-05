@@ -2,28 +2,50 @@
 // saved, all of them are tried at once, and the best one that answers wins (LAN, then direct
 // remote, then relay). Re-checked whenever the network changes, so moving between home and
 // mobile data doesn't need a slow one-at-a-time timeout crawl.
+//
+// The addresses plex.tv lists are https on plex.direct names, which fail on networks that block DNS
+// answers pointing at private addresses. So a LAN address is also tried directly over plain http,
+// as a last resort before leaving the LAN.
 import { fetch } from "@tauri-apps/plugin-http";
-import { Connection, getServers, plexHeaders } from "./plex";
+import { Connection, getServers, plexHeaders, ServerInfo } from "./plex";
 import { toast, useSession } from "./store";
 
 const PROBE_MS = 2500;
 /** Once something answers, how long a better address gets to answer too. */
 const GRACE_MS = 500;
 
-const rank = (c: Connection) => (c.relay ? 2 : c.local ? 0 : 1);
+const isPlain = (c: Connection) => c.uri.startsWith("http://");
+const rank = (c: Connection) => (c.relay ? 3 : !c.local ? 2 : isPlain(c) ? 1 : 0);
 
-async function probe(c: Connection, token: string) {
-  const r = await fetch(c.uri + "/identity", {
-    headers: plexHeaders(token),
-    connectTimeout: PROBE_MS,
-    signal: AbortSignal.timeout(PROBE_MS),
-  });
+/** The listed addresses, plus plain http for each LAN address. */
+function candidates(conns: Connection[]) {
+  const out = new Map(conns.map((c) => [c.uri, c]));
+  for (const c of conns) {
+    if (!c.local || c.relay || !c.address || !c.port || c.address.includes(":")) continue;
+    const uri = `http://${c.address}:${c.port}`;
+    if (!out.has(uri)) out.set(uri, { uri, local: true, relay: false, protocol: "http" });
+  }
+  return [...out.values()];
+}
+
+async function probe(c: Connection, machineId: string, token: string) {
+  const get = (path: string, auth?: string) =>
+    fetch(c.uri + path, { headers: plexHeaders(auth), connectTimeout: PROBE_MS, signal: AbortSignal.timeout(PROBE_MS) });
+  const plain = isPlain(c);
+  // Nothing proves who's at a plain address, so it doesn't get the token until it says it's ours.
+  const r = await get("/identity", plain ? undefined : token);
   if (!r.ok) throw new Error(String(r.status));
+  const id = (await r.json()).MediaContainer?.machineIdentifier;
+  if (id ? id !== machineId : plain) throw new Error("A different server answered");
+  // A server that requires secure connections still answers /identity over http.
+  if (plain && !(await get("/", token)).ok) throw new Error("Server refuses plain http");
   return c;
 }
 
-export function bestConnection(conns: Connection[], token: string): Promise<Connection | null> {
+/** With `patient`, waits for a better address as long as it takes to time out, not just a moment. */
+export function bestConnection(list: Connection[], machineId: string, token: string, patient = false): Promise<Connection | null> {
   return new Promise((resolve) => {
+    const conns = candidates(list);
     let best: Connection | null = null;
     let pending = conns.length;
     let grace = 0;
@@ -33,11 +55,11 @@ export function bestConnection(conns: Connection[], token: string): Promise<Conn
     };
     if (!pending) return resolve(null);
     for (const c of conns) {
-      probe(c, token)
+      probe(c, machineId, token)
         .then((ok) => {
           if (!best || rank(ok) < rank(best)) best = ok;
           if (rank(best) === 0) return finish();
-          if (!grace) grace = window.setTimeout(finish, GRACE_MS);
+          if (!grace && !patient) grace = window.setTimeout(finish, GRACE_MS);
         })
         .catch(() => undefined)
         .finally(() => {
@@ -76,30 +98,48 @@ async function check(report: boolean) {
   if (!conns.length) conns = (await refreshConnections().catch(() => null)) ?? [];
   // The address in use counts too, even if plex.tv no longer lists it (e.g. typed-in or stale).
   const known = conns.some((c) => c.uri === info.uri) ? conns : [{ uri: info.uri, local: info.local, relay: false, protocol: "" }, ...conns];
-  let best = await bestConnection(known, info.token);
+  // A startup check holds up the UI. Later ones don't, so a slow LAN still beats a quick relay.
+  let best = await bestConnection(known, info.machineId, info.token, !report);
   if (!best) {
     const fresh = await refreshConnections().catch(() => null);
-    if (fresh) best = await bestConnection(fresh, useSession.getState().server?.token ?? info.token);
+    if (fresh) best = await bestConnection(fresh, info.machineId, useSession.getState().server?.token ?? info.token, !report);
   }
   if (!best) {
     if (report) toast(`Can't reach ${info.name}. Downloaded and local music still plays.`, { error: true });
     return false;
   }
   const cur = useSession.getState().server!;
-  if (best.uri === cur.uri) return false;
-  useSession.getState().set({ server: { ...cur, uri: best.uri, local: best.local } });
-  toast(`Connected to ${cur.name} (${best.relay ? "relay" : best.local ? "local network" : "remote"})`);
+  if (best.uri === cur.uri) {
+    if (cur.local !== best.local) useSession.getState().set({ server: { ...cur, local: best.local } });
+    return false;
+  }
+  const next = { ...cur, uri: best.uri, local: best.local };
+  useSession.getState().set({ server: next });
+  toast(`Connected to ${cur.name} (${connectionKind(next)})`);
   return true;
+}
+
+export function connectionKind(s: ServerInfo) {
+  if (s.local) return "local network";
+  return s.connections?.find((c) => c.uri === s.uri)?.relay ? "Plex relay" : "remote";
 }
 
 /** Checks at startup and on every sign the network changed. */
 export function startConnectionMonitor() {
   void refreshConnections()
-    .then(() => ensureConnection())
-    .catch(() => undefined);
+    .catch(() => null)
+    .then(() => ensureConnection());
   const recheck = () => void ensureConnection();
   window.addEventListener("online", recheck);
   document.addEventListener("visibilitychange", () => !document.hidden && recheck());
-  setInterval(() => !document.hidden && recheck(), 60_000);
+  // Also fires when a system dialog closes, such as Android's local network permission.
+  window.addEventListener("focus", recheck);
+  // Off the LAN, keep looking for it even in the background: the music may be playing over a relay.
+  let last = Date.now();
+  setInterval(() => {
+    if (useSession.getState().server?.local && (document.hidden || Date.now() - last < 60_000)) return;
+    last = Date.now();
+    recheck();
+  }, 20_000);
   return recheck;
 }

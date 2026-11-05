@@ -20,11 +20,12 @@ class MainActivity : TauriActivity() {
       v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
       WindowInsetsCompat.CONSUMED
     }
-    // The playback notification needs this on Android 13+.
-    if (Build.VERSION.SDK_INT >= 33 &&
-      checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-    ) {
-      requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-    }
+    val wanted = buildList {
+      // The playback notification needs this on Android 13+.
+      if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+      // Without this, Android 17 blocks the Plex server and other devices on the local network.
+      if (Build.VERSION.SDK_INT >= 37) add(Manifest.permission.ACCESS_LOCAL_NETWORK)
+    }.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+    if (wanted.isNotEmpty()) requestPermissions(wanted.toTypedArray(), 1)
   }
 }

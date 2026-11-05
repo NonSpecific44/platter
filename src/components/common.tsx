@@ -141,7 +141,14 @@ export const PlaylistCard = memo(function PlaylistCard({ p }: { p: Playlist }) {
   );
 });
 
-export function Shelf({ title, children, onMore }: { title: string; children: React.ReactNode; onMore?: () => void }) {
+export function Shelf({ title, children, onMore, complete, actions }: {
+  title: string;
+  children: React.ReactNode;
+  onMore?: () => void;
+  /** The row already holds everything, so Show all only helps when it doesn't fit on screen. */
+  complete?: boolean;
+  actions?: React.ReactNode;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [ends, setEnds] = useState({ start: true, end: true });
   useEffect(() => {
@@ -170,7 +177,8 @@ export function Shelf({ title, children, onMore }: { title: string; children: Re
       <div className="shelf-head">
         <h2>{title}</h2>
         <div className="shelf-nav">
-          {onMore && (
+          {actions}
+          {onMore && (!complete || !(ends.start && ends.end)) && (
             <button className="link" onClick={onMore}>
               Show all <ChevronRight size={14} />
             </button>

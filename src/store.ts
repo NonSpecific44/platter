@@ -252,6 +252,8 @@ export type View =
   | { kind: "settings" }
   | { kind: "library"; tab?: "playlists" | "artists" | "albums" }
   | { kind: "search" }
+  /** Everything in a section: from a Plex listing (`path`), or the rest of a search (`search`). */
+  | { kind: "shelf"; title: string; itemType: string; path?: string; hub?: string; search?: string }
   | { kind: "local"; tab?: "albums" | "tracks" | "downloads" }
   | { kind: "requests" };
 

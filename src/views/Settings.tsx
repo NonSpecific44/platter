@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { FolderPlus, LogOut, RefreshCw, Server as ServerIcon, Trash2, X } from "lucide-react";
 import { audioDevices, player, usePlayer } from "../player";
 import { EQ_BANDS, EQ_PRESETS, Settings, setExcluded, toast, useSession, useSettings, useNav } from "../store";
+import { connectionKind } from "../connection";
 import { addToPlaylist, prompt } from "../actions";
 import { addFolder, removeFolder, scanLocal, useLocal } from "../local";
 import { LidarrOptions, lidarrOptions } from "../lidarr";
@@ -442,7 +443,7 @@ export function SettingsView() {
             </button>
           </div>
         </Row>
-        <Row label="Server" hint={`${server?.name} · ${server?.local ? "local network" : "remote"} · ${server?.uri}`}>
+        <Row label="Server" hint={`${server?.name} · ${server ? connectionKind(server) : ""} · ${server?.uri}`}>
           <button className="btn" onClick={() => setSession({ server: undefined, section: undefined })}>
             <ServerIcon size={15} /> Change
           </button>

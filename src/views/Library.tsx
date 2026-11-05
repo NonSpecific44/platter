@@ -1,11 +1,11 @@
 import { useMemo, useRef, useState } from "react";
-import { Heart, Plus, Search, Shuffle, Sparkles } from "lucide-react";
-import { Album, Artist, Playlist, Track } from "../plex";
+import { Heart, Plus, RefreshCw, Search, Shuffle, Sparkles } from "lucide-react";
+import { Album, Artist, Hub, Playlist, Track } from "../plex";
 import { player } from "../player";
-import { sectionKey, server, toast, useNav, useSession } from "../store";
+import { sectionKey, server, toast, useNav, useSession, View } from "../store";
 import { ALBUM_SORTS, prompt, useData, usePaged, usePlaylists, invalidate } from "../actions";
-import { AlbumCard, ArtistCard, ErrorBox, Loading, PlaylistCard, Shelf } from "../components/common";
-import { PageHead, RecentTiles } from "../components/Phone";
+import { AlbumCard, ArtistCard, ErrorBox, Loading, PlaylistCard, Shelf, TrackList } from "../components/common";
+import { ItemRows, PageHead, RecentTiles } from "../components/Phone";
 import { useIsPhone } from "../platform";
 
 // ---- home ------------------------------------------------------------------------
@@ -25,22 +25,22 @@ export function Home() {
   const shelves = (
     <>
       {hubs.data?.map((h) => (
-        <Shelf key={h.hubIdentifier} title={h.title}>
-          {h.items.map((it) =>
-            h.itemType === "artist" ? (
-              <ArtistCard key={it.ratingKey} a={it as Artist} />
-            ) : h.itemType === "playlist" ? (
-              <PlaylistCard key={it.ratingKey} p={it as Playlist} />
-            ) : h.itemType === "track" ? (
-              <TrackCard key={it.ratingKey} t={it as Track} />
-            ) : (
-              <AlbumCard key={it.ratingKey} a={it as Album} />
-            ),
-          )}
+        <Shelf key={h.hubIdentifier} title={h.title} complete={!h.more} onMore={() => go(hubView(h))}>
+          {h.items.map((it) => (
+            <HubCard key={it.ratingKey} item={it} itemType={h.itemType} />
+          ))}
         </Shelf>
       ))}
       {random.data && random.data.length > 0 && (
-        <Shelf title="Rediscover" onMore={random.reload}>
+        <Shelf
+          title="Rediscover"
+          onMore={() => go({ kind: "shelf", title: "Rediscover", itemType: "album", path: `/library/sections/${sec}/all?type=9&sort=random` })}
+          actions={
+            <button className="icon-btn shelf-action" title="Show different albums" onClick={random.reload}>
+              <RefreshCw size={16} />
+            </button>
+          }
+        >
           {random.data.map((a) => (
             <AlbumCard key={a.ratingKey} a={a} />
           ))}
@@ -102,6 +102,18 @@ function TrackCard({ t }: { t: Track }) {
   );
 }
 
+function HubCard({ item, itemType }: { item: Hub["items"][number]; itemType: string }) {
+  if (itemType === "artist") return <ArtistCard a={item as Artist} />;
+  if (itemType === "playlist") return <PlaylistCard p={item as Playlist} />;
+  if (itemType === "track") return <TrackCard t={item as Track} />;
+  return <AlbumCard a={item as Album} />;
+}
+
+function hubView(h: Hub): View {
+  if (h.hubIdentifier === "local-albums") return { kind: "local" };
+  return { kind: "shelf", title: h.title, itemType: h.itemType, path: h.path, hub: h.hubIdentifier };
+}
+
 // ---- grid helpers -------------------------------------------------------------------
 
 function useFilter<T extends { title: string }>(items: T[], extra?: (t: T) => string) {
@@ -142,6 +154,64 @@ function JumpBar({ onJump, available }: { onJump: (l: string) => void; available
           {l}
         </button>
       ))}
+    </div>
+  );
+}
+
+// ---- show all -------------------------------------------------------------------------
+
+export function ShelfView({ v }: { v: Extract<View, { kind: "shelf" }> }) {
+  const sec = sectionKey();
+  const phone = useIsPhone();
+  const { items: listed, done } = usePaged<Hub["items"][number]>(`shelf:${sec}:${v.path ?? ""}:${v.hub ?? ""}:${v.search ?? ""}`, async (start, size) => {
+    if (v.search) {
+      const items = (await server().search(sec, v.search, 200)).find((h) => h.hubIdentifier === v.hub)?.items ?? [];
+      return { items, total: items.length };
+    }
+    if (!v.path) return { items: [], total: 0 };
+    // A random order differs on every request, so paging through it would repeat and miss albums.
+    return server().hubItems(v.path, start, v.path.includes("sort=random") ? 1_000_000 : size);
+  });
+  // A hub whose full listing can't be read still has the items it came with.
+  const hubs = useData(v.hub && !v.search ? `hubs:${sec}` : null, () => server().hubs(sec));
+  const items = useMemo(() => {
+    if (listed.length || !done) return listed;
+    return hubs.data?.find((h) => h.hubIdentifier === v.hub)?.items ?? [];
+  }, [listed, done, hubs.data, v.hub]);
+  const { q, setQ, filtered } = useFilter(items, (x) => `${(x as Album).artist ?? ""} ${(x as Track).album ?? ""}`);
+  const empty = done && !items.length && <p className="dim pad">Nothing here.</p>;
+  const loading = !items.length && !done && <Loading />;
+  const filter = items.length > 1 && <FilterBox q={q} setQ={setQ} placeholder="Filter" />;
+
+  if (phone)
+    return (
+      <div className="view phone-view">
+        <PageHead title={v.title} />
+        <div className="shelf-filter">{filter}</div>
+        {loading}
+        {empty}
+        <ItemRows type={v.itemType} items={filtered} />
+      </div>
+    );
+  return (
+    <div className="view">
+      <header className="view-head">
+        <h1>{v.title}</h1>
+        <span className="dim">{items.length ? `${items.length.toLocaleString()} ${items.length === 1 ? "item" : "items"}` : ""}</span>
+        <div className="grow" />
+        {filter}
+      </header>
+      {loading}
+      {empty}
+      {v.itemType === "track" ? (
+        <TrackList tracks={filtered as Track[]} showAlbum showArtist showCover numbered="position" />
+      ) : (
+        <div className="grid">
+          {filtered.map((it) => (
+            <HubCard key={it.ratingKey} item={it} itemType={v.itemType} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

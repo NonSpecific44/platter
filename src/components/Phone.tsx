@@ -2,9 +2,9 @@
 // the big streaming apps. Used on Android and in very narrow windows.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  ChevronDown, Heart, Home, Inbox, Library, ListMusic, Mic2, Pause, Play, Search, Settings, X,
+  ChevronDown, ChevronRight, Heart, Home, Inbox, Library, ListMusic, Mic2, Pause, Play, Search, Settings, X,
 } from "lucide-react";
-import { Album, Artist, Hub, Playlist, Track } from "../plex";
+import { Album, Artist, Hub, Playlist, SEARCH_LIMIT, Track } from "../plex";
 import { player, usePlayer } from "../player";
 import { openMenu, sectionKey, server, useNav, useSettings, View } from "../store";
 import { ALBUM_SORTS, albumMenu, playAlbum, trackMenu, useData, usePaged, usePlaylists } from "../actions";
@@ -626,6 +626,56 @@ function AlbumRows({ go }: { go: (v: View) => void }) {
   );
 }
 
+// ---- mixed lists ---------------------------------------------------------------------------
+
+function ItemRow({ type, item, siblings }: { type: string; item: Hub["items"][number]; siblings: Hub["items"] }) {
+  const go = useNav((s) => s.go);
+  if (type === "track") {
+    const t = item as Track;
+    const tracks = siblings as Track[];
+    return (
+      <Row
+        thumb={t.thumb}
+        title={t.title}
+        sub={`Song · ${t.artist}`}
+        onClick={() => void player.playTracks(tracks, tracks.indexOf(t))}
+        onMenu={(e) => openMenu(e, trackMenu([t], {}))}
+      />
+    );
+  }
+  if (type === "artist") {
+    const a = item as Artist;
+    return <Row thumb={a.thumb} round title={a.title} sub="Artist" onClick={() => go({ kind: "artist", id: a.ratingKey })} />;
+  }
+  if (type === "playlist") {
+    const p = item as Playlist;
+    return <Row thumb={p.thumb} title={p.title} sub="Playlist" onClick={() => go({ kind: "playlist", id: p.ratingKey })} />;
+  }
+  const a = item as Album;
+  return (
+    <Row
+      thumb={a.thumb}
+      title={a.title}
+      sub={`Album · ${a.artist}`}
+      onClick={() => go({ kind: "album", id: a.ratingKey })}
+      onMenu={(e) => openMenu(e, albumMenu(a))}
+    />
+  );
+}
+
+/** A long list of one kind of item, drawn a screenful at a time. */
+export function ItemRows({ type, items }: { type: string; items: Hub["items"] }) {
+  const { limit, sentinel } = useProgressive(items.length);
+  return (
+    <div className="lrows">
+      {items.slice(0, limit).map((it) => (
+        <ItemRow key={it.ratingKey} type={type} item={it} siblings={items} />
+      ))}
+      {sentinel}
+    </div>
+  );
+}
+
 // ---- search --------------------------------------------------------------------------------
 
 export function SearchView() {
@@ -665,48 +715,27 @@ export function SearchView() {
         )}
       </div>
       {loading && !hubs.length && <Loading />}
-      {sorted.map((h) => (
-        <section key={h.hubIdentifier} className="phone-section">
-          <h2>{h.title}</h2>
-          <div className="lrows">
-            {h.items.slice(0, h.type === "track" ? 6 : 8).map((it) => {
-              if (h.type === "track") {
-                const t = it as Track;
-                const tracks = h.items as Track[];
-                return (
-                  <Row
-                    key={t.ratingKey}
-                    thumb={t.thumb}
-                    title={t.title}
-                    sub={`Song · ${t.artist}`}
-                    onClick={() => void player.playTracks(tracks, tracks.indexOf(t))}
-                    onMenu={(e) => openMenu(e, trackMenu([t], {}))}
-                  />
-                );
-              }
-              if (h.type === "artist") {
-                const a = it as Artist;
-                return <Row key={a.ratingKey} thumb={a.thumb} round title={a.title} sub="Artist" onClick={() => go({ kind: "artist", id: a.ratingKey })} />;
-              }
-              if (h.type === "album") {
-                const a = it as Album;
-                return (
-                  <Row
-                    key={a.ratingKey}
-                    thumb={a.thumb}
-                    title={a.title}
-                    sub={`Album · ${a.artist}`}
-                    onClick={() => go({ kind: "album", id: a.ratingKey })}
-                    onMenu={(e) => openMenu(e, albumMenu(a))}
-                  />
-                );
-              }
-              const p = it as Playlist;
-              return <Row key={p.ratingKey} thumb={p.thumb} title={p.title} sub="Playlist" onClick={() => go({ kind: "playlist", id: p.ratingKey })} />;
-            })}
-          </div>
-        </section>
-      ))}
+      {sorted.map((h) => {
+        const shown = h.type === "track" ? 6 : SEARCH_LIMIT;
+        const title = `${h.title} for “${q.trim()}”`;
+        return (
+          <section key={h.hubIdentifier} className="phone-section">
+            <div className="shelf-head section-head">
+              <h2>{h.title}</h2>
+              {h.items.length >= Math.min(shown + 1, SEARCH_LIMIT) && (
+                <button className="link" onClick={() => go({ kind: "shelf", title, itemType: h.type, hub: h.hubIdentifier, search: q.trim() })}>
+                  Show all <ChevronRight size={14} />
+                </button>
+              )}
+            </div>
+            <div className="lrows">
+              {h.items.slice(0, shown).map((it) => (
+                <ItemRow key={it.ratingKey} type={h.type} item={it} siblings={h.items} />
+              ))}
+            </div>
+          </section>
+        );
+      })}
       {q.trim().length >= 2 && !loading && !hubs.length && <p className="dim pad">Nothing found for “{q.trim()}”.</p>}
       {lidarrConfigured() && q.trim().length >= 2 && (
         <button className="btn request-link" onClick={() => go({ kind: "requests" })}>
