@@ -3,8 +3,9 @@ import { useEffect, useRef, useState, createElement } from "react";
 import { create } from "zustand";
 import { Album, Playlist, Track } from "./plex";
 import { player } from "./player";
-import { MenuItem, sectionKey, server, toast, useNav, useSettings } from "./store";
-import { Disc3, Heart, HeartOff, ListEnd, ListPlus, ListStart, Play, Plus, Shuffle, Trash2, User } from "lucide-react";
+import { MenuItem, isExcluded, sectionKey, server, setExcluded, toast, useNav, useSettings } from "./store";
+import { Ban, Disc3, Download, Heart, HeartOff, ListEnd, ListPlus, ListStart, Pencil, Play, Plus, Shuffle, Trash2, User } from "lucide-react";
+import { downloadTracks, isDownloaded, localMatch, removeDownloads } from "./local";
 import { useLibrary } from "./live";
 
 const icon = (c: any) => createElement(c, { size: 15 });
@@ -175,6 +176,12 @@ function playlistSubmenu(get: () => Promise<Track[]>): MenuItem[] {
   ];
 }
 
+/** Which file the metadata editor has open. */
+export const useMetadataEditor = create<{ track: Track | null; edit: (t: Track | null) => void }>((set) => ({
+  track: null,
+  edit: (track) => set({ track }),
+}));
+
 // ---- menus -------------------------------------------------------------------
 
 export function trackMenu(
@@ -193,14 +200,22 @@ export function trackMenu(
     { label: "Play next", icon: icon(ListStart), run: () => player.playNext(tracks) },
     { label: "Add to queue", icon: icon(ListEnd), run: () => player.addToQueue(tracks) },
     { label: "Add to playlist", icon: icon(ListPlus), submenu: playlistSubmenu(async () => tracks) },
+    ...(tracks.every(isDownloaded)
+      ? [{ label: "Remove download", icon: icon(Trash2), run: () => removeDownloads(tracks) }]
+      : tracks.every((x) => !!localMatch(x))
+        ? []
+        : [{ label: "Download", icon: icon(Download), run: () => downloadTracks(tracks) }]),
     { separator: true, label: "" },
   ];
   if (tracks.length === 1) {
     items.push(
       { label: loved ? "Unlove" : "Love", icon: icon(loved ? HeartOff : Heart), run: () => setLoved(t, !loved) },
       { label: "Track radio", icon: icon(Shuffle), run: () => trackRadio(t) },
+      { label: "Exclude from autoplay", icon: icon(Ban), submenu: exclusionItems(t) },
       { separator: true, label: "" },
     );
+    const file = localMatch(t);
+    if (file) items.push({ label: "Edit metadata", icon: icon(Pencil), run: () => useMetadataEditor.getState().edit(file) });
     if (t.albumKey) items.push({ label: "Go to album", icon: icon(Disc3), run: () => go({ kind: "album", id: t.albumKey! }) });
     if (t.artistKey) items.push({ label: "Go to artist", icon: icon(User), run: () => go({ kind: "artist", id: t.artistKey! }) });
   }
@@ -247,12 +262,24 @@ export async function trackRadio(t: Track) {
     const s = server();
     const tracks = t.artistKey ? await s.artistTracks(t.artistKey) : [];
     const random = await s.randomTracks(sectionKey(), 80);
-    const pool = [...tracks.filter((x) => x.ratingKey !== t.ratingKey).slice(0, 40), ...random];
+    const pool = [...tracks.filter((x) => x.ratingKey !== t.ratingKey).slice(0, 40), ...random].filter((x) => !isExcluded(x));
     await player.playTracks([t, ...pool.sort(() => Math.random() - 0.5)], 0);
     toast(`Radio started from “${t.title}”`);
   } catch (e) {
     toast(`Couldn't start radio: ${e}`, { error: true });
   }
+}
+
+/** Toggles for keeping a track, its album or its artist out of auto-generated queues. */
+function exclusionItems(t: Track): MenuItem[] {
+  const x = useSettings.getState().exclusions;
+  const row = (kind: "tracks" | "albums" | "artists", key: string | undefined, label: string, name: string): MenuItem[] =>
+    key ? [{ label: `${x[kind][key] ? "✓ " : ""}${label}`, run: () => setExcluded(kind, key, x[kind][key] ? null : name) }] : [];
+  return [
+    ...row("tracks", t.ratingKey, "This track", `${t.title} · ${t.artist}`),
+    ...row("albums", t.albumKey, "This album", `${t.album} · ${t.artist}`),
+    ...row("artists", t.artistKey, "This artist", t.artist),
+  ];
 }
 
 export function albumMenu(a: Album): MenuItem[] {
@@ -263,7 +290,13 @@ export function albumMenu(a: Album): MenuItem[] {
     { label: "Play next", icon: icon(ListStart), run: async () => player.playNext(await albumTracks(a.ratingKey)) },
     { label: "Add to queue", icon: icon(ListEnd), run: async () => player.addToQueue(await albumTracks(a.ratingKey)) },
     { label: "Add to playlist", icon: icon(ListPlus), submenu: playlistSubmenu(() => albumTracks(a.ratingKey)) },
+    { label: "Download", icon: icon(Download), run: async () => downloadTracks(await albumTracks(a.ratingKey)) },
     { separator: true, label: "" },
     ...(a.artistKey ? [{ label: "Go to artist", icon: icon(User), run: () => go({ kind: "artist", id: a.artistKey! }) }] : []),
+    {
+      label: `${useSettings.getState().exclusions.albums[a.ratingKey] ? "✓ " : ""}Exclude from autoplay`,
+      icon: icon(Ban),
+      run: () => setExcluded("albums", a.ratingKey, useSettings.getState().exclusions.albums[a.ratingKey] ? null : `${a.title} · ${a.artist}`),
+    },
   ];
 }

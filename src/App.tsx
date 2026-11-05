@@ -1,15 +1,21 @@
 import { useEffect, useRef } from "react";
-import { fetch } from "@tauri-apps/plugin-http";
-import { findConnection, getServers, plexHeaders } from "./plex";
+
 import { initPlayer, offerHandoff, player, usePlayer } from "./player";
 import { refreshLibrary, startLive } from "./live";
+import { invoke } from "@tauri-apps/api/core";
 import { initRemote } from "./remote";
+import { applyScheme } from "./theme";
+import { ensureConnection, startConnectionMonitor } from "./connection";
 import { DevicesSheet } from "./components/Devices";
-import { LibraryView, PhoneBar, PhoneNav, PhoneNowPlaying, SearchView } from "./components/Phone";
+import { MetadataEditor } from "./components/Metadata";
+import { LocalView } from "./views/Local";
+import { RequestsView } from "./views/Requests";
+import { initLocal } from "./local";
+import { LibraryView, PhoneBar, PhoneNav, PhoneNowPlaying, SearchView, useEdgeSwipeBack } from "./components/Phone";
 import { isAndroid, useIsPhone } from "./platform";
-import { initBackButton } from "./backButton";
+import { initAndroid, initBackButton } from "./backButton";
 import { startUpdateChecks } from "./updates";
-import { server, toast, useNav, useSession, useSettings } from "./store";
+import { server, useNav, useSession, useSettings } from "./store";
 import { setLoved, ratingOf, usePlaylists } from "./actions";
 import { accentFrom } from "./color";
 import { restoreSaneSize, toggleMini } from "./mini";
@@ -34,29 +40,44 @@ function useTheme() {
   const thumb = usePlayer((s) => s.queue[s.index]?.track.thumb);
   const hasServer = useSession((s) => !!s.server);
 
+  const scheme = useSettings((s) => s.colorScheme);
+  const design = useSettings((s) => s.design);
+
   useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = () => {
-      document.documentElement.dataset.theme = theme === "system" ? (mq.matches ? "dark" : "light") : theme;
-    };
-    apply();
-    mq.addEventListener("change", apply);
-    return () => mq.removeEventListener("change", apply);
-  }, [theme]);
+    document.documentElement.dataset.design = design;
+  }, [design]);
 
   useEffect(() => {
     (document.documentElement.style as any).zoom = String(uiScale);
   }, [uiScale]);
 
   useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
     let alive = true;
-    const set = (c: string) => alive && document.documentElement.style.setProperty("--accent", c);
-    set(accent);
-    if (fromArt && thumb && hasServer) accentFrom(server().imageUrl(thumb, 64)).then((c) => c && set(c));
+    const setAccent = (c: string) => alive && document.documentElement.style.setProperty("--accent", c);
+    const apply = async () => {
+      const mode = theme === "system" ? (mq.matches ? "dark" : "light") : theme;
+      document.documentElement.dataset.theme = mode;
+      const schemeAccent = await applyScheme(scheme, mode);
+      if (!alive) return;
+      setAccent(schemeAccent ?? accent);
+      if (isAndroid()) {
+        const color = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+        void invoke("system_bars", { color, dark: mode === "dark" }).catch(() => undefined);
+      }
+      // Only the default scheme tints itself from album art.
+      if (!schemeAccent && fromArt && thumb && hasServer) {
+        const c = await accentFrom(server().imageUrl(thumb, 64));
+        if (c) setAccent(c);
+      }
+    };
+    void apply();
+    mq.addEventListener("change", apply);
     return () => {
       alive = false;
+      mq.removeEventListener("change", apply);
     };
-  }, [accent, fromArt, thumb, hasServer]);
+  }, [theme, scheme, accent, fromArt, thumb, hasServer]);
 }
 
 // ---- keyboard ----------------------------------------------------------------------
@@ -146,31 +167,17 @@ function useShortcuts() {
   }, []);
 }
 
-/** The saved address may not work any more (e.g. laptop left home); find a working one. */
-async function ensureConnection() {
-  const { server: info, token, set } = useSession.getState();
-  if (!info || !token) return;
-  try {
-    const r = await fetch(info.uri + "/identity", { headers: plexHeaders(info.token), connectTimeout: 3000, signal: AbortSignal.timeout(5000) });
-    if (r.ok) return;
-  } catch {
-    /* fall through to rediscovery */
-  }
-  try {
-    const res = (await getServers(token)).find((s) => s.clientIdentifier === info.machineId);
-    if (!res) throw new Error("server no longer available on this account");
-    const c = await findConnection(res);
-    set({ server: { ...info, uri: c.uri, token: res.accessToken, local: c.local } });
-    toast(`Reconnected to ${info.name} (${c.relay ? "relay" : c.local ? "local network" : "remote"})`);
-  } catch (e) {
-    toast(`Can't reach ${info.name}: ${e instanceof Error ? e.message : e}`, { error: true });
-  }
-}
-
 // ---- layout ----------------------------------------------------------------------------
 
 function CurrentView() {
   const v = useNav((s) => s.stack[s.stack.length - 1]);
+  const depth = useNav((s) => s.stack.length);
+  const lastDepth = useRef(depth);
+  // Forward slides in from the right, back from the left.
+  const motion = depth > lastDepth.current ? "enter-forward" : depth < lastDepth.current ? "enter-back" : "enter-fade";
+  useEffect(() => {
+    lastDepth.current = depth;
+  }, [depth]);
   const ref = useRef<HTMLElement>(null);
   const positions = useRef(new Map<string, number>());
   const key = JSON.stringify(v);
@@ -227,9 +234,15 @@ function CurrentView() {
     case "search":
       body = <SearchView />;
       break;
+    case "local":
+      body = <LocalView tab={v.tab} />;
+      break;
+    case "requests":
+      body = <RequestsView />;
+      break;
   }
   return (
-    <main className="main" ref={ref} key={key}>
+    <main className={`main ${motion}`} ref={ref} key={key}>
       {body}
     </main>
   );
@@ -260,15 +273,21 @@ function Main() {
   const mini = useNav((s) => s.mini);
   const collapsed = useSettings((s) => s.sidebarCollapsed);
   const phone = useIsPhone();
+  const edgeSwipe = useEdgeSwipeBack();
   useShortcuts();
   useEffect(() => {
-    if (isAndroid()) initBackButton();
     initPlayer();
+    if (isAndroid()) {
+      initBackButton();
+      initAndroid();
+    }
+    void initLocal();
     restoreSaneSize();
-    ensureConnection().then(() => {
+    ensureConnection(true).then(() => {
       usePlaylists.getState().refresh();
       void offerHandoff();
       startLive();
+      startConnectionMonitor();
       void initRemote();
       startUpdateChecks();
     });
@@ -278,7 +297,7 @@ function Main() {
   if (mini) return <MiniPlayer />;
   if (phone)
     return (
-      <div className="app phone">
+      <div className="app phone" {...edgeSwipe}>
         <CurrentView />
         <PhoneBar />
         <PhoneNav />
@@ -309,6 +328,7 @@ export default function App() {
       <PromptModal />
       <HelpModal />
       <DevicesSheet />
+      <MetadataEditor />
       <Toasts />
     </>
   );

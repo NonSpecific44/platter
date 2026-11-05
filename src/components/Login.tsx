@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, Copy, ExternalLink, Library, Loader2, Server as ServerIcon, Wifi, Globe } from "lucide-react";
-import { authUrl, checkPin, createPin, findConnection, getServers, getUser, Resource, Server } from "../plex";
+import { authUrl, checkPin, createPin, getServers, getUser, Resource, Server } from "../plex";
+import { bestConnection } from "../connection";
 import { useSession } from "../store";
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -105,9 +106,10 @@ export function PickServer() {
     setBusy(r.clientIdentifier);
     setError(null);
     try {
-      const c = await findConnection(r);
+      const c = await bestConnection(r.connections, r.accessToken);
+      if (!c) throw new Error(`Couldn't reach ${r.name} on any of its addresses`);
       set({
-        server: { uri: c.uri, token: r.accessToken, machineId: r.clientIdentifier, name: r.name, local: c.local },
+        server: { uri: c.uri, token: r.accessToken, machineId: r.clientIdentifier, name: r.name, local: c.local, connections: r.connections },
         section: undefined,
       });
     } catch (e) {

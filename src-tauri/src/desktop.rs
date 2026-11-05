@@ -34,6 +34,11 @@ fn player_set_next(player: State<Player>, next: Option<String>) -> Result<(), St
 }
 
 #[tauri::command]
+fn player_crossfade(player: State<Player>, url: String, next: Option<String>, seconds: f64) -> Result<(), String> {
+    player.crossfade(&url, next.as_deref(), seconds)
+}
+
+#[tauri::command]
 fn player_stop(player: State<Player>) -> Result<(), String> {
     player.stop()
 }
@@ -210,6 +215,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppFlags::default())
@@ -239,6 +245,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             player_load,
             player_set_next,
+            player_crossfade,
             player_stop,
             player_seek,
             player_set,
@@ -251,6 +258,14 @@ pub fn run() {
             update_kind,
             update_install,
             set_render_mode,
+            crate::library::local_scan,
+            crate::library::local_write_tags,
+            crate::library::local_set_cover,
+            crate::library::local_index_load,
+            crate::library::local_index_save,
+            crate::library::downloads_dir,
+            crate::library::download_track,
+            crate::library::download_delete,
             crate::remote::remote_reply,
             crate::remote::remote_identity,
             crate::remote::remote_discover,

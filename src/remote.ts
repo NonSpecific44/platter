@@ -19,7 +19,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { fetch } from "@tauri-apps/plugin-http";
-import { PRODUCT, Track, VERSION, clientId, getUser, isOurs, plexHeaders, toTrack } from "./plex";
+import { PRODUCT, Track, VERSION, clientId, getUser, isOurs, plexHeaders, setPlexDeviceName, toTrack } from "./plex";
 import { currentTrack, player, playerFlags, usePlayer } from "./player";
 import { fmtTime, server, toast, useSession, useSettings } from "./store";
 import { isAndroid } from "./platform";
@@ -27,6 +27,8 @@ import { isAndroid } from "./platform";
 export { isAndroid };
 
 export interface Device {
+  /** Connected headphones or speakers, when the device knows. */
+  output?: string;
   name: string;
   host: string;
   port: number;
@@ -39,7 +41,7 @@ export interface Device {
 export type Snapshot = Pick<
   ReturnType<typeof usePlayer.getState>,
   "queue" | "index" | "position" | "duration" | "paused" | "loaded" | "buffering" | "volume" | "muted" | "shuffle" | "repeat" | "stopAfter"
-> & { version: number; playingSince: number };
+> & { version: number; playingSince: number; queueVersion: number };
 
 /** Another device, as last heard from (directly, or through the Plex server). */
 export interface Peer {
@@ -80,6 +82,7 @@ let lastPos = { pos: 0, at: 0 };
 let waiters: (() => void)[] = [];
 let commandId = 0;
 let playingSince = 0;
+let queueVersion = 0;
 
 function signature(s: ReturnType<typeof usePlayer.getState>) {
   return [s.queue.map((q) => q.uid).join(","), s.index, s.paused, s.loaded, s.buffering, s.volume, s.muted, s.shuffle, s.repeat, s.stopAfter, Math.round(s.duration)].join("|");
@@ -87,6 +90,7 @@ function signature(s: ReturnType<typeof usePlayer.getState>) {
 
 function watchState() {
   usePlayer.subscribe((s, p) => {
+    if (s.queue !== p.queue) queueVersion++;
     const playing = s.loaded && !s.paused && !playerFlags.remote;
     if (playing && !(p.loaded && !p.paused)) playingSince = Date.now();
     if (!playing) playingSince = 0;
@@ -132,6 +136,7 @@ function snapshot(): Snapshot {
     stopAfter: s.stopAfter,
     version,
     playingSince,
+    queueVersion,
   };
 }
 
@@ -250,7 +255,7 @@ async function route(r: IncomingRequest): Promise<{ status: number; contentType:
       if (!msg.device?.clientId) return { status: 400, contentType: "text/plain", body: "bad sync" };
       receivePeer({ ...msg.device, host: r.from }, msg.state, true);
       for (const c of msg.commands ?? []) await runCommand(c);
-      const reply: SyncMessage = { device: myDevice(), state: snapshot(), commands: takeOutbox(msg.device.clientId) };
+      const reply: SyncMessage = { device: myDevice(), state: stateFor(msg.have), commands: takeOutbox(msg.device.clientId), have: queueVersionOf(msg.device.clientId) };
       return { status: 200, contentType: "application/json", body: JSON.stringify(reply) };
     }
     if (p === "/tonearm/call") {
@@ -344,14 +349,12 @@ let hostName = "";
 export function deviceName() {
   const custom = useSettings.getState().deviceName.trim();
   if (custom) return custom;
-  if (isAndroid()) {
-    const model = /Android [^;]*; ([^;)]+?)(?: Build|\))/.exec(navigator.userAgent)?.[1];
-    return model ? `Platter on ${model}` : "Platter on Android";
-  }
-  return hostName ? `Platter on ${hostName}` : "Platter";
+  if (isAndroid()) return /Android [^;]*; ([^;)]+?)(?: Build|\))/.exec(navigator.userAgent)?.[1] ?? "Android";
+  return hostName || "Desktop";
 }
 
 async function announce() {
+  setPlexDeviceName(deviceName());
   const port = await invoke<number>("remote_identity", {
     identity: {
       name: deviceName(),
@@ -372,10 +375,19 @@ function myDevice(): Omit<Device, "host"> {
     clientId: clientId(),
     product: PRODUCT,
     deviceClass: isAndroid() ? "phone" : "pc",
+    output: useOutput.getState().name || undefined,
   };
 }
 
 let myPort = 32500;
+
+/** What this device is playing through, when it isn't its own speaker. */
+export const useOutput = create<{ name: string }>(() => ({ name: "" }));
+
+export function setOutputName(name: string) {
+  useOutput.setState({ name });
+  syncSoon();
+}
 
 // ---- sync -----------------------------------------------------------------------------------
 
@@ -385,9 +397,12 @@ interface Command {
 }
 
 interface SyncMessage {
-  device: Omit<Device, "host">;
-  state: Snapshot;
+  device: Omit<Device, "host"> & { delta?: boolean };
+  /** The queue is left out when the other side already has this version of it. */
+  state: Omit<Snapshot, "queue"> & { queue?: Snapshot["queue"] };
   commands: Command[];
+  /** The version of our queue the sender last received. */
+  have?: number;
 }
 
 /** Commands waiting for a device that we can't reach; it collects them when it syncs with us. */
@@ -413,11 +428,23 @@ function emptyPeer(d: Device): Peer {
   return { device: d, state: null, stateAt: 0, session: null, reachable: false, lastSeen: 0 };
 }
 
-function receivePeer(d: Device, state: Snapshot | null, inbound: boolean) {
+/** Our state for a peer, without the queue if it already has this version of it. */
+function stateFor(have: number | undefined): SyncMessage["state"] {
+  const { queue, ...rest } = snapshot();
+  return have === queueVersion ? rest : { ...rest, queue };
+}
+
+const queueVersionOf = (id: string) => peerQueueVersions.get(id);
+const peerQueueVersions = new Map<string, number>();
+
+function receivePeer(d: Device, incoming: SyncMessage["state"] | null, inbound: boolean) {
   if (d.clientId === clientId()) return;
   const now = Date.now();
+  let state: Snapshot | null = null;
   patchPeer(d.clientId, (p) => {
     const base = p ?? emptyPeer(d);
+    if (incoming) state = { ...incoming, queue: incoming.queue ?? base.state?.queue ?? [] };
+    if (incoming?.queue) peerQueueVersions.set(d.clientId, incoming.queueVersion);
     return {
       ...base,
       // Keep a known-good address: an inbound request's source address can be a NAT or VPN one.
@@ -461,6 +488,8 @@ async function remoteFetch(d: Device, path: string, init: RequestInit = {}, time
 }
 
 const lastTry = new Map<string, number>();
+/** The version of our queue each peer has confirmed receiving. */
+const sentAck = new Map<string, number | undefined>();
 
 async function syncWith(p: Peer) {
   const id = p.device.clientId;
@@ -469,11 +498,12 @@ async function syncWith(p: Peer) {
   if (!p.reachable && Date.now() - (lastTry.get(id) ?? 0) < 20_000) return;
   lastTry.set(id, Date.now());
   const commands = takeOutbox(id);
-  const msg: SyncMessage = { device: myDevice(), state: snapshot(), commands };
+  const msg: SyncMessage = { device: myDevice(), state: stateFor(sentAck.get(id)), commands, have: queueVersionOf(id) };
   try {
     const r = await remoteFetch(p.device, "/tonearm/sync", { method: "POST", body: JSON.stringify(msg) }, 4000);
     const reply = (await r.json()) as SyncMessage;
     patchPeer(id, (cur) => (cur ? { ...cur, reachable: true } : cur));
+    sentAck.set(id, reply.have);
     receivePeer({ ...reply.device, host: p.device.host }, reply.state, false);
     for (const c of reply.commands ?? []) await runCommand(c);
   } catch {
@@ -542,7 +572,7 @@ async function refreshSessions() {
     if (!pl?.machineIdentifier || pl.machineIdentifier === me || m.type !== "track") continue;
     seen.add(pl.machineIdentifier);
     const d: Device = {
-      name: pl.title || pl.product || "Plex player",
+      name: String(pl.title || pl.product || "Plex player").replace(/^(Platter|Tonearm)( - | on )/, ""),
       host: isOurs(pl.product) ? pl.address ?? "" : "",
       port: 32500,
       clientId: pl.machineIdentifier,
@@ -793,12 +823,16 @@ export async function initRemote() {
     const anyPlaying =
       playingHere() || Object.values(useRemote.getState().peers).some((p) => nowPlaying(p)?.playing) || !!useRemote.getState().target;
     void syncAll();
-    setTimeout(tick, anyPlaying ? 2000 : 8000);
+    // In the background nobody's watching progress bars; save the battery.
+    setTimeout(tick, document.hidden ? 20_000 : anyPlaying ? 2000 : 8000);
   };
   setTimeout(tick, 1500);
   setTimeout(() => void discover(), 1000);
-  setInterval(() => void discover(), 60_000);
+  setInterval(() => !document.hidden && void discover(), 60_000);
+  let sessionTick = 0;
   setInterval(() => {
+    // Every 5 s on screen or while playing; once a minute otherwise.
+    if (document.hidden && !playingHere() && ++sessionTick % 12) return;
     void refreshSessions();
     if (useSettings.getState().exclusivePlayback) void yieldToNewerDevice();
   }, 5000);

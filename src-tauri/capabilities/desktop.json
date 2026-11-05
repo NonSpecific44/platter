@@ -11,6 +11,7 @@
     "windows"
   ],
   "permissions": [
-    "window-state:default"
+    "window-state:default",
+    "dialog:allow-open"
   ]
 }

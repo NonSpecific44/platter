@@ -1,9 +1,10 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Disc3, Heart, Music, Play, User, X } from "lucide-react";
-import { Album, Artist, Playlist, Track } from "../plex";
+import { Album, Artist, Playlist, Track, fileType } from "../plex";
 import { player, usePlayer } from "../player";
 import { MenuItem, fmtTime, openMenu, server, useMenu, useNav, useToasts } from "../store";
 import { isAndroid, isPhone } from "../platform";
+import { localMatch } from "../local";
 import { attachShelfWheel, pageStride, smoothScrollBy } from "../smooth";
 import { albumMenu, playAlbum, playArtist, setLoved, trackMenu, usePrompt, useRatings } from "../actions";
 
@@ -37,7 +38,8 @@ export function Cover({ thumb, round, className = "", icon }: { thumb?: string; 
   useLayoutEffect(() => observeWidth(ref.current!, setWidth), []);
   useEffect(() => setFailed(false), [thumb]);
   const device = width * (window.devicePixelRatio || 1);
-  const exact = device > 0 && Math.abs(device - Math.round(device)) < 0.01;
+  // Local covers come at whatever size the file holds, so they always need scaling.
+  const exact = device > 0 && Math.abs(device - Math.round(device)) < 0.01 && !thumb?.startsWith("local-cover:");
   const fetchSize = exact ? Math.round(device) : Math.ceil(device / 100) * 100;
   const url = !failed && fetchSize ? server().imageUrl(thumb, fetchSize) : undefined;
   const Fallback = icon === "artist" ? User : icon === "album" ? Disc3 : Music;
@@ -291,7 +293,10 @@ export function TrackList({ tracks, showAlbum, showArtist = "auto", showCover, n
         {showCover && <Cover thumb={t.thumb} className="track-cover" />}
         <div className="track-main">
           <div className="track-title">{t.title}</div>
-          {artistShown && <ArtistLink t={t} />}
+          <div className="track-info">
+            {artistShown && <ArtistLink t={t} />}
+            <FileType t={t} />
+          </div>
         </div>
         {showAlbum && <AlbumLink t={t} />}
         <Heart_ t={t} />
@@ -307,6 +312,12 @@ export function TrackList({ tracks, showAlbum, showArtist = "auto", showCover, n
     );
   });
   return <div className="tracklist">{rows}</div>;
+}
+
+/** Subtle file-type label ("FLAC"), from the track's codec or file extension. */
+function FileType({ t }: { t: Track }) {
+  const type = fileType(localMatch(t) ?? t);
+  return type ? <span className="file-type">{type}</span> : null;
 }
 
 function ArtistLink({ t }: { t: Track }) {

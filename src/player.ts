@@ -7,10 +7,12 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Track } from "./plex";
+import { Track, toTrack } from "./plex";
 import { isAndroid } from "./platform";
 import { similarTracks } from "./similar";
-import { EQ_BANDS, fmtTime, loadJson, persist, sectionKey, server, toast, useSession, useSettings } from "./store";
+import { localMatch } from "./local";
+import { ensureConnection } from "./connection";
+import { EQ_BANDS, fmtTime, isExcluded, loadJson, persist, sectionKey, server, toast, useSession, useSettings } from "./store";
 
 export interface QItem {
   uid: string;
@@ -52,7 +54,7 @@ export const usePlayer = create<PlayerState>(() => ({
   repeat: savedPos.repeat ?? "off",
   stopAfter: false,
   position: savedPos.position ?? 0,
-  duration: 0,
+  duration: (saved.queue?.[saved.index ?? 0]?.track.duration ?? 0) / 1000,
   paused: true,
   buffering: false,
   loaded: false,
@@ -112,7 +114,10 @@ function wantsTranscode() {
   return null;
 }
 
+/** A file on this device beats streaming the same song. */
 function urlFor(t: Track) {
+  const file = localMatch(t)?.local;
+  if (file) return isAndroid() ? "file://" + file.split("/").map(encodeURIComponent).join("/") : file;
   const u = new URL(server().streamUrl(t, wantsTranscode(), session));
   u.searchParams.set("_n", String(++urlSeq));
   return u.toString();
@@ -163,6 +168,7 @@ async function load(index: number, start = 0, paused = false) {
   const item = get().queue[index];
   if (!item) return;
   if (!start) start = resumePoint(item.track);
+  fadeOut = null;
   reportStopped();
   set({ index, position: start, duration: item.track.duration / 1000, loaded: true, paused });
   currentUrl = urlFor(item.track);
@@ -178,6 +184,13 @@ async function load(index: number, start = 0, paused = false) {
 
 const LAST_PLAYED = "tonearm.lastPlayedAt";
 
+/** Artwork for notifications and media controls, which can't read the app's own asset URLs. */
+function coverForSystem(t: Track) {
+  const thumb = localMatch(t)?.thumb ?? t.thumb;
+  if (thumb?.startsWith("local-cover:")) return "file://" + thumb.slice(12);
+  return server().imageUrl(thumb, 512) ?? null;
+}
+
 function trackStarted() {
   const t = currentTrack();
   if (!t) return;
@@ -192,13 +205,105 @@ function trackStarted() {
       artist: t.artist,
       album: t.album,
       duration: t.duration / 1000,
-      coverUrl: server().imageUrl(t.thumb, 512) ?? null,
+      coverUrl: coverForSystem(t),
       notify: s.notifications && !document.hasFocus(),
     },
   }).catch(() => undefined);
   set((st) => ({ history: [t, ...st.history.filter((h) => h.ratingKey !== t.ratingKey)].slice(0, 200) }));
   if (s.reportToPlex) server().timeline(t, get().paused ? "paused" : "playing", get().position * 1000, session);
   void maybeAutoplay();
+  void applyGain(t);
+  preloadGain();
+}
+
+// ---- crossfade ----------------------------------------------------------------------------
+
+/** The uid of the track fading out, so a fade only starts once per track. */
+let fadeOut: string | null = null;
+let fadeStarting = false;
+
+function maybeCrossfade(b: BackendState) {
+  const s = useSettings.getState();
+  if (!s.crossfade || b.paused || b.idle || b.buffering || !b.duration) return;
+  const { queue, index, repeat } = get();
+  const cur = queue[index];
+  if (!cur || fadeOut === cur.uid || repeat === "one") return;
+  const remaining = b.duration - b.position;
+  if (remaining > s.crossfadeSeconds || remaining <= 0.3 || b.duration < s.crossfadeSeconds * 2) return;
+  const ni = upcomingIndex();
+  const nextItem = ni === null ? null : queue[ni];
+  if (!nextItem) return;
+  // Albums were sequenced to run into each other; leave those gapless.
+  if (s.crossfadeSkipAlbums && cur.track.albumKey && cur.track.albumKey === nextItem.track.albumKey) return;
+  fadeOut = cur.uid;
+  reportStopped();
+  const url = nextItem.uid === nextUid && nextUrl ? nextUrl : urlFor(nextItem.track);
+  currentUrl = url;
+  nextUrl = null;
+  nextUid = null;
+  expectingPlayback = true;
+  set({ index: ni!, position: 0, duration: nextItem.track.duration / 1000 });
+  fadeStarting = true;
+  void call("player_crossfade", { url, next: null, seconds: Math.min(s.crossfadeSeconds, remaining) }).then(() => {
+    // Reports from the outgoing track may still be on their way; give them a moment to land.
+    setTimeout(() => (fadeStarting = false), 400);
+    set({ position: 0 });
+    trackStarted();
+    void syncNext();
+  });
+}
+
+// ---- loudness ----------------------------------------------------------------------------
+
+const gainCache = new Map<string, { track?: number; album?: number } | null>();
+
+/** Plex's loudness analysis for a track, if the server has done it. */
+async function plexGain(t: Track) {
+  if (t.local) return { track: t.gain, album: t.albumGain };
+  if (gainCache.has(t.ratingKey)) return gainCache.get(t.ratingKey);
+  let g: { track?: number; album?: number } | null = null;
+  try {
+    const audio = (await server().trackStreams(t.ratingKey)).find((x) => x.streamType === 2);
+    const track = parseFloat(audio?.gain);
+    const album = parseFloat(audio?.albumGain);
+    if (Number.isFinite(track) || Number.isFinite(album)) {
+      g = { track: Number.isFinite(track) ? track : undefined, album: Number.isFinite(album) ? album : undefined };
+    }
+  } catch {
+    return null; // don't cache a network failure
+  }
+  gainCache.set(t.ratingKey, g);
+  return g;
+}
+
+/**
+ * Evens out volume between tracks using Plex's analysis (or a local file's tags), which works
+ * for every file once Plex has analysed it. Falls back to ReplayGain tags in the stream.
+ */
+async function applyGain(t: Track) {
+  const s = useSettings.getState();
+  const mode = s.replaygain;
+  if (mode === "no" || mode === "dynamic") {
+    void setProp("volume-gain", 0);
+    return;
+  }
+  const g = await plexGain(t);
+  if (currentTrack()?.ratingKey !== t.ratingKey) return;
+  const db = mode === "album" ? g?.album ?? g?.track : g?.track ?? g?.album;
+  if (db === undefined) {
+    void setProp("replaygain", mode);
+    void setProp("volume-gain", 0);
+  } else {
+    void setProp("replaygain", "no");
+    void setProp("volume-gain", Math.max(-30, Math.min(12, db + s.replaygainPreamp)));
+  }
+}
+
+/** Fetch the next track's gain ahead of time so it applies as the track starts. */
+function preloadGain() {
+  const ni = upcomingIndex();
+  const t = ni === null ? null : get().queue[ni]?.track;
+  if (t && useSettings.getState().replaygain !== "no") void plexGain(t);
 }
 
 let autoplayBusy = false;
@@ -269,8 +374,10 @@ interface BackendState {
 }
 
 function onState(b: BackendState) {
-  if (playerFlags.remote) return;
+  // While a crossfade starts, reports may still describe the outgoing track.
+  if (playerFlags.remote || fadeStarting) return;
   const prev = get();
+  maybeCrossfade(b);
   if (b.idle && !prev.loaded) return; // initial idle before anything was loaded
   const patch: Partial<PlayerState> = { buffering: b.buffering, muted: b.muted };
   if (!b.idle) {
@@ -299,6 +406,33 @@ function onState(b: BackendState) {
     }
   }
   tickSleep();
+}
+
+/** Android Auto started a queue natively: the app adopts it and carries on from the same point. */
+function takeOverQueue(raw: unknown, play = false) {
+  if (!raw) return;
+  const q = (typeof raw === "string" ? JSON.parse(raw) : raw) as { tracks: any[]; index: number; position: number; paused: boolean };
+  if (!q.tracks?.length) return;
+  const tracks = q.tracks.map(toTrack);
+  set({ queue: items(tracks), original: null, index: q.index, shuffle: false, stopAfter: false });
+  void load(q.index, q.position, play ? false : q.paused);
+}
+
+let lastRecovery = 0;
+
+/**
+ * A failed stream usually means the network changed: find a working address for the server and
+ * carry on from the same point. Only reports an error if that doesn't help.
+ */
+async function onPlaybackError(msg: string) {
+  const t = currentTrack();
+  const { position, paused, index, loaded } = get();
+  if (loaded && t && !localMatch(t) && Date.now() - lastRecovery > 20_000) {
+    lastRecovery = Date.now();
+    await ensureConnection();
+    return load(index, position, paused);
+  }
+  toast(`${msg}${t ? `: ${t.title}` : ""}`, { error: true });
 }
 
 function onFile(path: string) {
@@ -545,7 +679,7 @@ export const player = {
     void syncNext();
   },
   async shuffleLibrary() {
-    const tracks = await server().randomTracks(sectionKey(), 300);
+    const tracks = (await server().randomTracks(sectionKey(), 300)).filter((t) => !isExcluded(t));
     set({ shuffle: false, original: null });
     return player.playTracks(smartShuffle(items(tracks)).map((x) => x.track));
   },
@@ -575,18 +709,28 @@ export function smartShuffle<T extends QItem>(xs: T[]): T[] {
 
 function eqFilter() {
   const s = useSettings.getState();
-  if (!s.eqEnabled) return "";
-  const bands = EQ_BANDS.map((f, i) => `equalizer=f=${f}:t=o:w=1:g=${s.eqGains[i] ?? 0}`).join(",");
-  return `lavfi=[volume=${s.eqPreamp}dB,${bands}]`;
+  const parts: string[] = [];
+  if (s.eqEnabled) parts.push(`volume=${s.eqPreamp}dB`, ...EQ_BANDS.map((f, i) => `equalizer=f=${f}:t=o:w=1:g=${s.eqGains[i] ?? 0}`));
+  // "Dynamic" levels everything live, including files nothing has analysed.
+  if (s.replaygain === "dynamic") parts.push("dynaudnorm=f=500:g=31:p=0.95:m=8");
+  return parts.length ? `lavfi=[${parts.join(",")}]` : "";
 }
 
 function applySettings(s = useSettings.getState(), p?: ReturnType<typeof useSettings.getState>) {
   if (!p || s.gapless !== p.gapless) void setProp("gapless-audio", s.gapless ? "weak" : "no");
-  if (!p || s.replaygain !== p.replaygain) void setProp("replaygain", s.replaygain);
+  if (!p || s.replaygain !== p.replaygain) {
+    void setProp("replaygain", s.replaygain === "dynamic" ? "no" : s.replaygain);
+    const t = currentTrack();
+    if (p && t && get().loaded) void applyGain(t);
+  }
   if (!p || s.replaygainPreamp !== p.replaygainPreamp) void setProp("replaygain-preamp", s.replaygainPreamp);
   if (!p || s.audioDevice !== p.audioDevice) void setProp("audio-device", s.audioDevice);
   if (!p || s.speed !== p.speed) void setProp("speed", s.speed);
-  if (!p || s.eqEnabled !== p.eqEnabled || s.eqGains !== p.eqGains || s.eqPreamp !== p.eqPreamp) void setProp("af", eqFilter());
+  if (!p || s.eqEnabled !== p.eqEnabled || s.eqGains !== p.eqGains || s.eqPreamp !== p.eqPreamp || s.replaygain !== p.replaygain) {
+    void setProp("af", eqFilter());
+    // Android applies the bands through the system equaliser instead.
+    if (isAndroid()) void setProp("eq", JSON.stringify(s.eqEnabled ? { preamp: s.eqPreamp, bands: EQ_BANDS.map((hz, i) => [hz, s.eqGains[i] ?? 0]) } : null));
+  }
   if (!p || s.closeToTray !== p.closeToTray) invoke("set_close_to_tray", { enabled: s.closeToTray }).catch(() => undefined);
 }
 
@@ -604,6 +748,10 @@ export async function audioDevices(): Promise<{ name: string; description: strin
 const nativeHandlers: Record<string, (payload: any) => void> = {};
 (window as any).__tonearmNative = (event: string, payload: unknown) => nativeHandlers[event]?.(payload);
 
+export function onNative<T>(event: string, cb: (payload: T) => void) {
+  nativeHandlers[event] = cb;
+}
+
 function onBackend<T>(event: string, cb: (payload: T) => void) {
   if (isAndroid()) nativeHandlers[event] = cb;
   else void listen<T>(`player://${event}`, (e) => cb(e.payload));
@@ -613,6 +761,12 @@ let initialised = false;
 export function initPlayer() {
   if (initialised) return;
   initialised = true;
+  useSession.subscribe((st, prev) => {
+    if (st.server?.uri === prev.server?.uri || !get().loaded) return;
+    // The queued next track still points at the old address.
+    nextUid = null;
+    void syncNext();
+  });
   applySettings();
   useSettings.subscribe((s, p) => applySettings(s, p));
   void setProp("volume", get().volume);
@@ -621,10 +775,7 @@ export function initPlayer() {
   onBackend<BackendState>("state", onState);
   onBackend<string>("file", onFile);
   onBackend("idle", () => onIdle());
-  onBackend<string>("error", (msg) => {
-    const t = currentTrack();
-    toast(`${msg}${t ? `: ${t.title}` : ""}`, { error: true });
-  });
+  onBackend<string>("error", (msg) => void onPlaybackError(msg));
   const control = ({ action, value }: { action: string; value?: number }) => {
     switch (action) {
       case "play":
@@ -647,7 +798,12 @@ export function initPlayer() {
         return player.setVolume(value ?? get().volume);
     }
   };
-  if (isAndroid()) onBackend("control", control);
+  if (isAndroid()) {
+    onBackend("control", control);
+    // Someone just picked this in the car, so it should play.
+    onBackend<string>("external", (raw) => takeOverQueue(raw, true));
+    void invoke<string>("player_take_over").then((raw) => takeOverQueue(raw), () => undefined);
+  }
   else listen<{ action: string; value?: number }>("media-control", (e) => control(e.payload));
   window.addEventListener("beforeunload", reportStopped);
 }

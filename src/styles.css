@@ -269,10 +269,12 @@ input[type="color"] { width: 44px; height: 30px; border: none; background: none;
 .track .more { opacity: 0; font-size: 18px; width: 28px; }
 .track:hover .more { opacity: 1; }
 .bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; }
-.bars i { width: 3px; background: var(--accent); border-radius: 1px; animation: bar 0.9s ease-in-out infinite alternate; }
+/* Few steps on purpose: a smooth animation here redraws the window at the full refresh rate and
+   costs over a whole CPU core in WebKitGTK. */
+.bars i { width: 3px; height: 100%; background: var(--accent); border-radius: 1px; animation: bar 0.9s steps(4) infinite alternate; }
 .bars i:nth-child(2) { animation-delay: -0.3s; }
 .bars i:nth-child(3) { animation-delay: -0.6s; }
-.bars.paused i { animation-play-state: paused; height: 40%; }
+.bars.paused i { animation: none; height: 40%; }
 @keyframes bar { from { height: 25%; } to { height: 100%; } }
 
 /* ---- player bar ---- */
@@ -591,7 +593,9 @@ input[type="color"] { width: 44px; height: 30px; border: none; background: none;
   .sheet { width: 100%; max-height: 80vh; border-radius: 16px 16px 0 0; padding-bottom: 20px; }
   .toasts { bottom: 150px; left: 12px; right: 12px; transform: none; align-items: stretch; }
 }
-.android .track .more, .android .card-play { opacity: 1; transform: none; }
+.android .track .more { opacity: 1; }
+/* On a phone, tapping a card opens it; a play button on every cover is just clutter. */
+.app.phone .card-play { display: none; }
 
 /* ---- devices ---- */
 .sheet-backdrop { position: fixed; inset: 0; z-index: 95; background: rgba(0, 0, 0, 0.35); display: flex; justify-content: flex-end; align-items: flex-end; padding: 0 16px calc(var(--bar-h) + 10px); animation: fade 0.12s ease-out; }
@@ -637,4 +641,137 @@ input[type="color"] { width: 44px; height: 30px; border: none; background: none;
   .track:has(.track-cover) { grid-template-columns: 28px auto minmax(0, 1fr) 40px; }
   /* Album/playlist actions: play, shuffle, love and "⋯"; queue actions live in the ⋯ menu. */
   .hero-actions [title="Play next"], .hero-actions [title="Add to queue"] { display: none; }
+}
+
+.track-info { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.track-info .track-sub { min-width: 0; }
+.file-type { flex-shrink: 0; font-size: 10px; letter-spacing: 0.04em; color: var(--text-faint); }
+
+/* ---- 0.3 ---- */
+/* Screen transitions (Material shared-axis). */
+@keyframes enter-forward { from { opacity: 0; transform: translateX(28px); } }
+@keyframes enter-back { from { opacity: 0; transform: translateX(-28px); } }
+@keyframes enter-fade { from { opacity: 0; } }
+.app.phone .main.enter-forward { animation: enter-forward 0.24s cubic-bezier(0.2, 0, 0, 1); }
+.app.phone .main.enter-back { animation: enter-back 0.24s cubic-bezier(0.2, 0, 0, 1); }
+.app.phone .main.enter-fade { animation: enter-fade 0.18s ease-out; }
+.app.phone .view { animation: none; }
+.app.phone .main { touch-action: pan-y; }
+.app.phone .shelf-row, .app.phone .chips { touch-action: pan-x pan-y; }
+.phone-bar, .pnp-head, .pnp-body.swipeable { touch-action: none; }
+.seek-track { touch-action: none; }
+.pnp-art-wrap { width: min(100%, 50vh); will-change: transform; }
+.pnp-art-wrap .pnp-art { width: 100%; }
+.request-link { margin-top: 18px; }
+.phone-section-title { font-size: 18px; margin: 16px 0 4px; }
+.seek.scrubbing .seek-tip { top: -34px; font-size: 13px; padding: 3px 8px; }
+.seek.scrubbing .bar-knob { opacity: 1; }
+.app.phone .seek-track { height: 28px; }
+.app.phone .seek .time { min-width: 36px; font-size: 11px; }
+
+/* Wavy seek bar: the Android media player's squiggle. */
+.wavy-bar { height: 12px; background: none; }
+.wavy-bar::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 3px; background: var(--bg-active); }
+.wavy-line {
+  position: absolute; inset: 0; clip-path: inset(0 100% 0 0);
+  background-repeat: repeat-x; background-size: 28px 12px; background-position: 0 center; background-color: transparent;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='12'%3E%3Cpath d='M0 6 Q7 0 14 6 T28 6' fill='none' stroke='black' stroke-width='3'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='12'%3E%3Cpath d='M0 6 Q7 0 14 6 T28 6' fill='none' stroke='black' stroke-width='3'/%3E%3C/svg%3E");
+  -webkit-mask-size: 28px 12px; mask-size: 28px 12px; -webkit-mask-repeat: repeat-x; mask-repeat: repeat-x;
+  background-image: linear-gradient(var(--accent), var(--accent));
+  animation: wavy 1.4s linear infinite;
+}
+.wavy-line.still { animation-play-state: paused; }
+@keyframes wavy { to { -webkit-mask-position-x: 28px; mask-position-x: 28px; } }
+
+/* Even spacing between shelves. */
+.shelf { margin-bottom: 28px; }
+.shelf-row { padding-bottom: 0; }
+.shelf-row .card { content-visibility: visible; }
+.shelf-head { min-height: 32px; margin-bottom: 10px; }
+.app.phone .shelf { margin-bottom: 24px; }
+
+/* Metadata editor. */
+.meta-editor { width: min(520px, 94vw); max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.meta-path { word-break: break-all; margin: 0; }
+.meta-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); flex: 1; min-width: 0; }
+.meta-field .text-input { min-width: 0; width: 100%; color: var(--text); font-size: 14px; }
+.meta-numbers { display: flex; gap: 10px; }
+.meta-actions { flex-wrap: wrap; margin-top: 6px; }
+.meta-results { display: flex; flex-direction: column; gap: 4px; }
+.meta-result { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border-radius: 8px; text-align: left; }
+.meta-result:hover { background: var(--bg-hover); }
+.meta-result-title { font-weight: 600; }
+
+/* Mini player scales with its window. */
+.mini { container-type: size; }
+.mini-art { width: auto; height: 100%; aspect-ratio: 1; flex-shrink: 0; }
+.mini-title { font-size: clamp(13px, 16cqh, 22px); }
+.mini-artist { font-size: clamp(11px, 12cqh, 16px); }
+@media (min-height: 140px) { .mini .play-btn { width: 40px; height: 40px; } .mini .icon-btn { width: 34px; height: 34px; } .mini-body { gap: 8px; } }
+@media (min-height: 280px) {
+  .mini { flex-direction: column; align-items: stretch; padding: 14px; }
+  .mini-art { height: auto; width: min(100%, calc(100vh - 150px)); align-self: center; }
+  .mini-body { flex: none; text-align: center; }
+  .mini .transport { justify-content: center; gap: 10px; }
+  .mini-exit { position: absolute; top: 6px; right: 6px; }
+}
+
+/* Vertical monitors. */
+@media (orientation: portrait) and (min-width: 701px) {
+  .app, .app.side-collapsed { --sidebar-w: 64px; --bar-h: 118px; }
+  .app .side-label, .app .side-search kbd, .side-server { display: none; }
+  .sidebar .side-top { flex-direction: column; gap: 2px; }
+  .app.with-panel {
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 38%) var(--bar-h);
+    grid-template-areas: "side main" "side panel" "bar bar";
+  }
+  .app:not(.with-panel) { grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 0; }
+  .sidepanel { border-left: none; border-top: 1px solid var(--border); }
+  .playerbar {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-areas: "seek seek seek" "left transport right";
+    gap: 2px 12px; padding: 6px 14px 8px; align-content: center;
+  }
+  .pb-left { grid-area: left; }
+  .pb-center { display: contents; }
+  .pb-center > .seek { grid-area: seek; max-width: none; }
+  .pb-center > .transport { grid-area: transport; }
+  .pb-right { grid-area: right; }
+  .volume input[type="range"] { width: 70px; }
+  .pb-art { width: 52px; }
+  .np-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); gap: 2vh; padding: 6vh 6vw 3vh; }
+  .np-right { display: flex; }
+  .np-art { width: min(100%, 46vh); }
+  .np-left { gap: 16px; }
+  .hero-cover { width: 180px; }
+}
+
+/* Material style. */
+[data-design="material"] { --radius: 16px; }
+[data-design="material"] .btn { border-radius: 20px; }
+[data-design="material"] .btn.primary { color: var(--bg); }
+[data-design="material"] .chip { border-radius: 8px; }
+[data-design="material"] .card-art .cover, [data-design="material"] .hero-cover { border-radius: 12px; }
+[data-design="material"] .cover.round { border-radius: 0; }
+[data-design="material"] .modal, [data-design="material"] .sheet, [data-design="material"] .elsewhere { border-radius: 28px; border: none; }
+[data-design="material"] .text-input, [data-design="material"] select { border-radius: 4px; }
+[data-design="material"] .play-btn { background: var(--accent); color: var(--bg); border-radius: 18px; }
+[data-design="material"] .card-play { border-radius: 14px; }
+[data-design="material"] .icon-btn:active, [data-design="material"] .btn:active, [data-design="material"] .chip:active, [data-design="material"] .lrow:active, [data-design="material"] .track:active { background-color: var(--bg-active); }
+[data-design="material"] .phone-bar { border-radius: 14px; }
+[data-design="material"] .phone-nav { padding: 6px 0 10px; background: var(--bg-elev); }
+[data-design="material"] .phone-nav button svg { box-sizing: content-box; padding: 4px 20px; border-radius: 16px; transition: background 0.2s; }
+[data-design="material"] .phone-nav button.on svg { background: var(--bg-active); background: color-mix(in srgb, var(--accent) 30%, transparent); }
+[data-design="material"] .phone-nav button.on { color: var(--text); }
+[data-design="material"] .chip.on { color: var(--bg); }
+[data-design="material"] .pnp .play-btn { width: 76px; height: 76px; border-radius: 26px; }
+[data-design="material"] .bar { height: 6px; border-radius: 6px; }
+[data-design="material"] .bar-fill { border-radius: 6px; }
+@media (max-width: 700px) {
+  [data-design="material"] .sheet { border-radius: 28px 28px 0 0; }
+  [data-design="material"] .sheet::before, [data-design="material"] .menu::before { content: ""; display: block; width: 32px; height: 4px; border-radius: 4px; background: var(--text-faint); margin: 4px auto 10px; }
+  [data-design="material"] .menu { border-radius: 28px 28px 0 0; border: none; }
+  [data-design="material"] .modal { width: min(560px, 92vw); }
 }

@@ -14,6 +14,15 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 - Queue with drag-and-drop, play next / add to queue, undo, smart shuffle (no back-to-back artists), repeat, stop after current track, and a sleep timer that fades out
 - Optional transcoding for slow or remote connections
 
+**Music on your device**
+- Add local folders. Platter scans them, reads the tags, and looks up files with missing tags on MusicBrainz.
+- Edit metadata in the app, with online search if a match fails. Where Android doesn't allow changing a file, the edit is kept inside Platter.
+- If a song exists more than once, it's listed once. A local file beats streaming, and the best-quality copy wins. Plex still gets the play count.
+- Download tracks and albums for offline listening.
+
+**Requests**
+- Link Lidarr (Settings) to search for and request artists and albums.
+
 **Plex**
 - Sign in with your Plex account, with automatic server discovery and reconnection
 - Reports playback to Plex (Now Playing, play counts, *Recently played*) and saves your position. Long tracks resume where any Plex player left off.
@@ -33,7 +42,18 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 - Speaks the Plex Companion protocol (HTTP on port 32500) with GDM discovery, so Plex apps can also see and control Platter.
 
 **Android**
-- Spotify-style layout: Home, Search and Your Library tabs, a mini player, full-screen Now Playing, and bottom-sheet menus. The back button works through pages and overlays.
+- Home, Search and Your Library tabs, a mini player, full-screen Now Playing, and bottom-sheet menus.
+- Material design with Platter's colours, or choose Material You (wallpaper colours) or another colour scheme.
+- Gestures: swipe down to minimise Now Playing, sideways to skip, right to go back. Press and drag the seek bar to scrub; waveform, wavy or plain.
+- Android Auto with Albums, Artists and Playlists tabs and steering-wheel controls. Android Auto hides sideloaded apps until you turn on "Unknown sources" in its developer settings.
+- Every server address is saved and checked at once, so moving between home and mobile data is quick.
+- Android 7 and newer, including older system WebViews.
+
+**Sound**
+- Crossfade (off by default), keeping albums gapless if you want.
+- EQ presets on desktop and Android, plus your own saved ones.
+- Loudness normalisation from Plex's analysis or ReplayGain tags, plus a live "dynamic" mode on desktop.
+- Exclude tracks, albums or artists from autoplay, radio and library shuffle.
 
 **Desktop**
 - MPRIS (media keys, KDE/GNOME media controls), track-change notifications, tray icon, close to tray
@@ -50,7 +70,7 @@ Download from the [latest release](../../releases/latest):
 | --- | --- |
 | Arch / CachyOS / Manjaro | `platter-*-x86_64.pkg.tar.zst`, install with `sudo pacman -U platter-*.pkg.tar.zst` |
 | Any Linux | `Platter_*_amd64.AppImage`, then `chmod +x` and run it |
-| Android 7+ (arm64) | `Platter-*-android-arm64.apk`, allow installs from your browser or file manager |
+| Android 7+ | `Platter-*-android.apk`, allow installs from your browser or file manager |
 
 The Arch package and AppImage need `mpv` (libmpv) and `webkit2gtk-4.1` installed.
 
@@ -108,11 +128,15 @@ A Flatpak manifest is in `packaging/flatpak` (it builds libmpv from source; see 
 You also need JDK 17+, the Android SDK, and NDK 28 (`ANDROID_HOME`, `NDK_HOME` and `JAVA_HOME` set).
 
 ```bash
-rustup target add aarch64-linux-android
-npx tauri android build --apk --target aarch64
+rustup target add aarch64-linux-android armv7-linux-androideabi
+npx tauri android build --apk --target aarch64 armv7
 ```
 
 Release builds are signed with the key described in `.android-signing/keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`). That folder is git-ignored. Keep the key safe: Android only installs an update if it's signed with the same key. Without it, Gradle produces an unsigned APK.
+
+### Testing
+
+`cargo test --lib` (in `src-tauri`) covers tags and file handling. `node tests/mock-plex.mjs` runs a stand-in Plex and Lidarr server with tone audio. Build with `VITE_TEST_PLEX=http://<host>:32400` to sign in to it automatically (`10.0.2.2` from the Android emulator).
 
 ## Project layout
 

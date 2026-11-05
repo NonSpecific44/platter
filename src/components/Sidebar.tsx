@@ -1,4 +1,4 @@
-import { Disc3, Home, ListMusic, ListOrdered, PanelLeftClose, PanelLeftOpen, Search, Settings, User, Heart, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { Disc3, Home, ListMusic, ListOrdered, PanelLeftClose, PanelLeftOpen, Search, Settings, User, Heart, ChevronLeft, ChevronRight, RefreshCw, HardDrive, Inbox } from "lucide-react";
 import { refreshLibrary, useLibrary } from "../live";
 import { useNav, useSession, useSettings, View } from "../store";
 import { usePlaylists } from "../actions";
@@ -9,6 +9,7 @@ const NAV: [View, string, typeof Home][] = [
   [{ kind: "albums" }, "Albums", Disc3],
   [{ kind: "playlists" }, "Playlists", ListMusic],
   [{ kind: "queue" }, "Queue", ListOrdered],
+  [{ kind: "local" }, "On this device", HardDrive],
 ];
 
 export function Sidebar() {
@@ -20,6 +21,7 @@ export function Sidebar() {
   const server = useSession((s) => s.server);
   const section = useSession((s) => s.section);
   const scanning = useLibrary((s) => s.scanning);
+  const lidarr = useSettings((x) => !!(x.lidarrUrl && x.lidarrKey));
   // On a phone the queue/lyrics panel covers the page, so navigating closes it.
   const navTo = (v: View) => {
     if (window.innerWidth <= 700) useNav.getState().setPanel("none");
@@ -59,6 +61,12 @@ export function Sidebar() {
           <span className="side-label">{label}</span>
         </button>
       ))}
+      {lidarr && (
+        <button className={`side-item ${cur.kind === "requests" ? "active" : ""}`} onClick={() => navTo({ kind: "requests" })} title="Request music">
+          <Inbox size={18} />
+          <span className="side-label">Requests</span>
+        </button>
+      )}
       <div className="side-sep" />
       <div className="side-playlists">
         <button className={`side-item small ${is({ kind: "playlist", id: "loved" }) ? "active" : ""}`} onClick={() => go({ kind: "playlist", id: "loved" })} title="Loved tracks">

@@ -12,12 +12,18 @@ import { toggleMini } from "../mini";
 
 const levelCache = new Map<string, number[] | null>();
 
-/** Seek bar; draws the track's loudness waveform when Plex has sonic analysis for it. */
+/**
+ * Seek bar: the track's loudness waveform when Plex has sonic analysis for it, a wavy line, or a
+ * plain bar. Press and drag anywhere to scrub; the seek happens on release.
+ */
 export function SeekBar({ compact }: { compact?: boolean }) {
   const position = usePlayer((s) => s.position);
   const duration = usePlayer((s) => s.duration);
+  const paused = usePlayer((s) => s.paused || !s.loaded);
   const track = usePlayer((s) => s.queue[s.index]?.track);
-  const showWave = useSettings((s) => s.showWaveform) && !compact;
+  const style = useSettings((s) => s.seekStyle);
+  const showWave = style === "waveform" && !compact;
+  const wavy = style === "wavy" && !compact;
   const [levels, setLevels] = useState<number[] | null>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [drag, setDrag_] = useState<number | null>(null);
@@ -39,8 +45,8 @@ export function SeekBar({ compact }: { compact?: boolean }) {
     if (fillRef.current) fillRef.current.style.clipPath = clip;
     if (knobRef.current) knobRef.current.style.transform = `translateX(${f * 100}%)`;
     if (playedRef.current) playedRef.current.style.clipPath = clip;
-  });
-  useEffect(() => repaint(), [levels, duration]);
+  }, ref);
+  useEffect(() => repaint(), [levels, duration, style]);
 
   useEffect(() => {
     setLevels(null);
@@ -71,26 +77,29 @@ export function SeekBar({ compact }: { compact?: boolean }) {
   };
 
   return (
-    <div className={`seek ${levels ? "wave" : ""} ${compact ? "compact" : ""}`}>
+    <div className={`seek ${levels ? "wave" : ""} ${wavy ? "wavy" : ""} ${compact ? "compact" : ""} ${drag !== null ? "scrubbing" : ""}`}>
       <span className="time">{fmtTime(drag !== null ? drag * duration : position)}</span>
       <div
         className="seek-track"
         ref={ref}
-        onMouseMove={(e) => setHover(frac(e.clientX))}
-        onMouseLeave={() => setHover(null)}
-        onMouseDown={(e) => {
-          if (!duration) return;
-          setDrag(frac(e.clientX));
-          const move = (ev: MouseEvent) => setDrag(frac(ev.clientX));
-          const up = (ev: MouseEvent) => {
-            window.removeEventListener("mousemove", move);
-            window.removeEventListener("mouseup", up);
-            player.seek(frac(ev.clientX) * duration);
-            setDrag(null);
-          };
-          window.addEventListener("mousemove", move);
-          window.addEventListener("mouseup", up);
+        onPointerMove={(e) => {
+          if (dragRef.current !== null) setDrag(frac(e.clientX));
+          else if (e.pointerType === "mouse") setHover(frac(e.clientX));
         }}
+        onPointerLeave={() => setHover(null)}
+        onPointerDown={(e) => {
+          if (!duration) return;
+          e.stopPropagation();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          setHover(null);
+          setDrag(frac(e.clientX));
+        }}
+        onPointerUp={(e) => {
+          if (dragRef.current === null) return;
+          void player.seek(frac(e.clientX) * duration);
+          setDrag(null);
+        }}
+        onPointerCancel={() => setDrag(null)}
       >
         {levels ? (
           <div className="wave-wrap">
@@ -102,6 +111,13 @@ export function SeekBar({ compact }: { compact?: boolean }) {
               </div>
             ))}
           </div>
+        ) : wavy ? (
+          <div className="bar wavy-bar">
+            <div className={`wavy-line ${paused ? "still" : ""}`} ref={fillRef} />
+            <div className="bar-knob-track" ref={knobRef}>
+              <div className="bar-knob" />
+            </div>
+          </div>
         ) : (
           <div className="bar">
             <div className="bar-fill" ref={fillRef} />
@@ -110,7 +126,12 @@ export function SeekBar({ compact }: { compact?: boolean }) {
             </div>
           </div>
         )}
-        {hover !== null && duration > 0 && (
+        {drag !== null && duration > 0 && (
+          <div className="seek-tip" style={{ left: `${drag * 100}%` }}>
+            {fmtTime(drag * duration)}
+          </div>
+        )}
+        {drag === null && hover !== null && duration > 0 && (
           <div className="seek-tip" style={{ left: `${hover * 100}%` }}>
             {fmtTime(hover * duration)}
           </div>
@@ -122,42 +143,47 @@ export function SeekBar({ compact }: { compact?: boolean }) {
 }
 
 /**
- * Calls `paint` once per display frame with the playhead position. The backend only reports
- * position ~4 times a second, so in between it's extrapolated from the last report.
+ * Calls `paint` with the playhead position, extrapolated between the backend's reports. It only
+ * repaints as often as the bar visibly moves (a 4-minute track on a 600 px bar moves one pixel
+ * every 0.4 s), not on every display frame: repainting 175 times a second while music plays is
+ * what used to cost so much CPU.
  */
-export function usePlayhead(paint: (seconds: number) => void) {
+export function usePlayhead(paint: (seconds: number) => void, bar?: React.RefObject<HTMLElement | null>) {
   const paintRef = useRef(paint);
   paintRef.current = paint;
   const dirty = useRef(true);
   useEffect(() => {
     let anchor = { pos: usePlayer.getState().position, at: performance.now() };
     let shown = -1;
+    let timer = 0;
     const unsub = usePlayer.subscribe((s, p) => {
       if (s.position !== p.position || s.paused !== p.paused) anchor = { pos: s.position, at: performance.now() };
     });
-    let raf = 0;
-    const frame = (now: number) => {
-      raf = requestAnimationFrame(frame);
+    const tick = () => {
       const s = usePlayer.getState();
       const running = s.loaded && !s.paused && !s.buffering;
       let est = anchor.pos;
       // Cap the extrapolation so a stalled stream doesn't run away from the real position.
-      if (running) est += (Math.min(now - anchor.at, 600) / 1000) * useSettings.getState().speed;
+      if (running) est += (Math.min(performance.now() - anchor.at, 1200) / 1000) * useSettings.getState().speed;
       if (s.duration) est = Math.min(est, s.duration);
       // Reports jitter by a few ms; don't let that tug the bar backwards.
       if (running && est < shown && shown - est < 0.25) est = shown;
-      if (est === shown && !running && !dirty.current) return;
-      dirty.current = false;
-      shown = est;
-      paintRef.current(est);
+      if (dirty.current || (est !== shown && !document.hidden)) {
+        dirty.current = false;
+        shown = est;
+        paintRef.current(est);
+      }
+      const width = bar?.current?.clientWidth || 400;
+      const perPixel = s.duration ? (s.duration * 1000) / width : 500;
+      timer = window.setTimeout(tick, dirty.current ? 16 : !running || document.hidden ? 200 : Math.max(33, Math.min(500, perPixel / 2)));
     };
-    raf = requestAnimationFrame(frame);
+    tick();
     return () => {
-      cancelAnimationFrame(raf);
+      clearTimeout(timer);
       unsub();
     };
   }, []);
-  /** Repaint on the next frame even if the playhead hasn't moved. */
+  /** Repaint soon even if the playhead hasn't moved. */
   return () => {
     dirty.current = true;
   };

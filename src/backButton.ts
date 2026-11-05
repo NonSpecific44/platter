@@ -1,16 +1,28 @@
-// Android back button: Tauri sends it to the webview's history, so keep one history entry armed
-// and turn each back press into "close the top overlay" or "previous page" inside the app.
-// With nothing left to go back to, the next press leaves the app.
-import { useMenu, useNav, toast } from "./store";
+// Android's back button: closes whatever's on top, then steps back through pages. Only from the
+// home screen does it leave the app, and music keeps playing when it does.
+import { invoke } from "@tauri-apps/api/core";
+import { onBackButtonPress } from "@tauri-apps/api/app";
+import { onNative } from "./player";
+import { useMenu, useNav, useSession } from "./store";
 import { useDevicesSheet } from "./components/Devices";
-
-function arm() {
-  history.pushState({ tonearm: true }, "");
-}
+import { useMetadataEditor, usePrompt } from "./actions";
+import { ensureConnection } from "./connection";
+import { clientId } from "./plex";
+import { setOutputName } from "./remote";
 
 function handleBack(): boolean {
+  const pending = usePrompt.getState().resolve;
+  if (pending) {
+    pending(null);
+    usePrompt.setState({ resolve: null });
+    return true;
+  }
   if (useMenu.getState().items) {
     useMenu.getState().close();
+    return true;
+  }
+  if (useMetadataEditor.getState().track) {
+    useMetadataEditor.getState().edit(null);
     return true;
   }
   if (useDevicesSheet.getState().open) {
@@ -30,8 +42,7 @@ function handleBack(): boolean {
     nav.back();
     return true;
   }
-  const cur = nav.stack[0];
-  if (cur.kind !== "home") {
+  if (nav.stack[0].kind !== "home") {
     useNav.setState({ stack: [{ kind: "home" }], forward: [] });
     return true;
   }
@@ -39,15 +50,28 @@ function handleBack(): boolean {
 }
 
 export function initBackButton() {
-  arm();
-  window.addEventListener("popstate", () => {
-    if (handleBack()) arm();
-    else toast("Press back again to exit");
+  void onBackButtonPress(() => {
+    if (!handleBack()) void invoke("app_background");
   });
-  // Opening something new re-arms the guard after an "exit" warning.
-  useNav.subscribe((s, p) => {
-    if (s.stack.length !== p.stack.length || s.nowPlaying !== p.nowPlaying) {
-      if (!history.state?.tonearm) arm();
-    }
-  });
+}
+
+/** Tells the Android side what it needs to run without the UI (Android Auto) and listens to it. */
+export function initAndroid() {
+  onNative("network", () => void ensureConnection());
+  onNative<string>("output", setOutputName);
+  const push = () => {
+    const { server, section } = useSession.getState();
+    if (!server || !section) return;
+    void invoke("auto_config", {
+      json: JSON.stringify({
+        uri: server.uri,
+        uris: (server.connections ?? []).map((c) => c.uri),
+        token: server.token,
+        section: section.key,
+        clientId: clientId(),
+      }),
+    }).catch(() => undefined);
+  };
+  push();
+  useSession.subscribe((s, p) => (s.server !== p.server || s.section !== p.section) && push());
 }

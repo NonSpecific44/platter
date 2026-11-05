@@ -58,7 +58,18 @@ export const EQ_PRESETS: Record<string, number[]> = {
   Electronic: [5, 4, 1, 0, -2, 1, 0, 1, 4, 5],
   Acoustic: [3, 3, 2, 1, 1, 1, 2, 2, 2, 1],
   "Late night": [3, 2, 1, 0, 0, 0, -1, -2, -3, -4],
+  Pop: [-1, 0, 2, 4, 4, 2, 0, -1, -1, -1],
+  "Hip-hop": [6, 5, 2, 1, -1, -1, 1, 0, 2, 3],
+  Jazz: [3, 2, 1, 2, -1, -1, 0, 1, 2, 3],
+  Classical: [4, 3, 2, 1, -1, -1, 0, 2, 3, 4],
+  Metal: [4, 3, 0, 0, -2, 0, 2, 4, 4, 3],
+  Podcast: [-4, -3, -1, 1, 3, 4, 4, 2, 0, -2],
+  "Small speakers": [5, 4, 3, 1, 0, 0, 1, 2, 2, 1],
+  Headphones: [2, 1, 0, -1, 0, 1, 2, 2, 1, 2],
+  Loudness: [5, 3, 0, -1, -2, -2, -1, 1, 3, 5],
 };
+
+export type LoudnessMode = "no" | "track" | "album" | "dynamic";
 
 export interface Settings {
   theme: "system" | "dark" | "light";
@@ -67,7 +78,7 @@ export interface Settings {
   uiScale: number;
   showWaveform: boolean;
   gapless: boolean;
-  replaygain: "no" | "track" | "album";
+  replaygain: LoudnessMode;
   replaygainPreamp: number;
   audioDevice: string;
   speed: number;
@@ -86,13 +97,32 @@ export interface Settings {
   smartShuffle: boolean;
   sidebarCollapsed: boolean;
   settingsVersion: number;
-  /** Shown to other devices; empty means "Platter on <hostname>". */
+  /** Shown to other devices; empty means the hostname or phone model. */
   deviceName: string;
   /** Keep playing similar music when the queue runs out. */
   autoplay: boolean;
   /** Starting playback here pauses Platter on your other devices. */
   exclusivePlayback: boolean;
   autoUpdateCheck: boolean;
+  /** Blend from one track into the next. */
+  crossfade: boolean;
+  crossfadeSeconds: number;
+  /** Keep albums gapless even with crossfade on. */
+  crossfadeSkipAlbums: boolean;
+  eqUserPresets: Record<string, number[]>;
+  /** Never added to autoplay, radio or library shuffle. Key → display name. */
+  exclusions: { artists: Record<string, string>; albums: Record<string, string>; tracks: Record<string, string> };
+  localFolders: string[];
+  /** Look up files with missing tags on MusicBrainz. */
+  localAutoMatch: boolean;
+  lidarrUrl: string;
+  lidarrKey: string;
+  lidarrRoot: string;
+  lidarrQuality: number;
+  lidarrMetadata: number;
+  seekStyle: "waveform" | "wavy" | "bar";
+  design: "material" | "classic";
+  colorScheme: string;
   /** Read access to the release repository while it is private. */
   githubToken: string;
 }
@@ -122,18 +152,49 @@ const defaultSettings: Settings = {
   reportToPlex: true,
   smartShuffle: true,
   sidebarCollapsed: false,
-  settingsVersion: 2,
+  settingsVersion: 3,
   deviceName: "",
   autoplay: true,
   exclusivePlayback: true,
   autoUpdateCheck: true,
+  crossfade: false,
+  crossfadeSeconds: 6,
+  crossfadeSkipAlbums: true,
+  eqUserPresets: {},
+  exclusions: { artists: {}, albums: {}, tracks: {} },
+  localFolders: [],
+  localAutoMatch: true,
+  lidarrUrl: "",
+  lidarrKey: "",
+  lidarrRoot: "",
+  lidarrQuality: 0,
+  lidarrMetadata: 0,
+  seekStyle: "waveform",
+  design: /Android/i.test(navigator.userAgent) ? "material" : "classic",
+  colorScheme: "platter",
   githubToken: "",
 };
 
 function migrate(s: Settings): Settings {
   // v2: close to tray became the default.
   if (s.settingsVersion < 2) s = { ...s, closeToTray: true };
-  return { ...s, settingsVersion: 2 };
+  // v3: the waveform switch became a choice of seek bars.
+  if (s.settingsVersion < 3 && !s.showWaveform) s = { ...s, seekStyle: "bar" };
+  return { ...s, settingsVersion: 3 };
+}
+
+/** Excluded from anything Platter queues by itself (autoplay, radio, library shuffle). */
+export function isExcluded(t: { ratingKey: string; artistKey?: string; albumKey?: string }) {
+  const x = useSettings.getState().exclusions;
+  return !!(x.tracks[t.ratingKey] || (t.albumKey && x.albums[t.albumKey]) || (t.artistKey && x.artists[t.artistKey]));
+}
+
+export function setExcluded(kind: "artists" | "albums" | "tracks", key: string, name: string | null) {
+  const s = useSettings.getState();
+  const group = { ...s.exclusions[kind] };
+  if (name === null) delete group[key];
+  else group[key] = name;
+  s.set({ exclusions: { ...s.exclusions, [kind]: group } });
 }
 
 export const useSettings = create<Settings & { set: (p: Partial<Settings>) => void }>((set) => ({
@@ -182,7 +243,9 @@ export type View =
   | { kind: "queue" }
   | { kind: "settings" }
   | { kind: "library"; tab?: "playlists" | "artists" | "albums" }
-  | { kind: "search" };
+  | { kind: "search" }
+  | { kind: "local"; tab?: "albums" | "tracks" | "downloads" }
+  | { kind: "requests" };
 
 interface NavState {
   stack: View[];

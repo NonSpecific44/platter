@@ -92,6 +92,50 @@ fn media_volume(volume: f64) {
 }
 
 #[tauri::command]
+fn player_crossfade(n: State<Native>, url: String, next: Option<String>, seconds: f64) -> Result<(), String> {
+    call(&n, "crossfade", json!({ "url": url, "next": next, "seconds": seconds })).map(|_| ())
+}
+
+fn value_of(v: Value) -> String {
+    v.get("value").and_then(Value::as_str).unwrap_or_default().to_string()
+}
+
+#[tauri::command]
+fn player_take_over(n: State<Native>) -> Result<String, String> {
+    call(&n, "takeOver", json!({})).map(value_of)
+}
+
+#[tauri::command]
+fn app_background(n: State<Native>) -> Result<(), String> {
+    call(&n, "background", json!({})).map(|_| ())
+}
+
+#[tauri::command]
+fn system_bars(n: State<Native>, color: String, dark: bool) -> Result<(), String> {
+    call(&n, "systemBars", json!({ "color": color, "dark": dark })).map(|_| ())
+}
+
+#[tauri::command]
+fn auto_config(n: State<Native>, json: String) -> Result<(), String> {
+    call(&n, "autoConfig", json!({ "json": json })).map(|_| ())
+}
+
+#[tauri::command]
+fn dynamic_colors(n: State<Native>) -> Result<Value, String> {
+    call(&n, "dynamicColors", json!({}))
+}
+
+#[tauri::command]
+fn local_request_access(n: State<Native>) -> Result<(), String> {
+    call(&n, "requestAccess", json!({})).map(|_| ())
+}
+
+#[tauri::command]
+fn local_roots(n: State<Native>) -> Result<String, String> {
+    call(&n, "storageRoots", json!({})).map(value_of)
+}
+
+#[tauri::command]
 fn update_kind() -> &'static str {
     "android"
 }
@@ -126,8 +170,24 @@ pub fn run() {
             media_playback,
             media_volume,
             set_close_to_tray,
+            player_crossfade,
+            player_take_over,
+            app_background,
+            auto_config,
+            system_bars,
+            dynamic_colors,
+            local_request_access,
+            local_roots,
             update_kind,
             update_install_apk,
+            crate::library::local_scan,
+            crate::library::local_write_tags,
+            crate::library::local_set_cover,
+            crate::library::local_index_load,
+            crate::library::local_index_save,
+            crate::library::downloads_dir,
+            crate::library::download_track,
+            crate::library::download_delete,
             crate::remote::remote_reply,
             crate::remote::remote_identity,
             crate::remote::remote_discover,

@@ -2,17 +2,106 @@
 // the big streaming apps. Used on Android and in very narrow windows.
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ChevronDown, Heart, Home, Library, ListMusic, Mic2, Pause, Play, Search, Settings, X,
+  ChevronDown, Heart, Home, Inbox, Library, ListMusic, Mic2, Pause, Play, Search, Settings, X,
 } from "lucide-react";
 import { Album, Artist, Hub, Playlist, Track } from "../plex";
 import { player, usePlayer } from "../player";
 import { openMenu, sectionKey, server, useNav, View } from "../store";
 import { albumMenu, playAlbum, trackMenu, useData, usePaged, usePlaylists } from "../actions";
 import { useRemote } from "../remote";
+import { lidarrConfigured } from "../lidarr";
 import { Cover, Heart_, Loading } from "./common";
 import { SeekBar, Transport, usePlayhead } from "./PlayerBar";
 import { LyricsView, QueueList } from "./Panels";
 import { DevicesButton, ElsewhereBar, useDevicesSheet } from "./Devices";
+
+// ---- gestures -----------------------------------------------------------------------------
+
+interface DragHandlers {
+  /** Called as the finger moves, once the direction is known. */
+  onMove?: (axis: "x" | "y", delta: number) => void;
+  /** Called on release with the total movement and speed (px/ms). */
+  onEnd?: (axis: "x" | "y", delta: number, speed: number) => void;
+  /** Return false to leave a touch alone. */
+  accept?: (e: React.PointerEvent) => boolean;
+}
+
+/** Pointer handlers that work out which way a swipe is going. Tiny movements stay plain taps. */
+function useSwipe({ onMove, onEnd, accept }: DragHandlers) {
+  const start = useRef<{ x: number; y: number; t: number; axis: "x" | "y" | null; id: number } | null>(null);
+  const swiped = useRef(false);
+  return {
+    onPointerDown(e: React.PointerEvent) {
+      swiped.current = false;
+      start.current = !accept || accept(e) ? { x: e.clientX, y: e.clientY, t: e.timeStamp, axis: null, id: e.pointerId } : null;
+    },
+    onPointerMove(e: React.PointerEvent) {
+      const s = start.current;
+      if (!s) return;
+      const dx = e.clientX - s.x;
+      const dy = e.clientY - s.y;
+      if (!s.axis) {
+        if (Math.hypot(dx, dy) < 10) return;
+        s.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+        swiped.current = true;
+        (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+      }
+      onMove?.(s.axis, s.axis === "x" ? dx : dy);
+    },
+    onPointerUp(e: React.PointerEvent) {
+      const s = start.current;
+      start.current = null;
+      if (!s?.axis) return;
+      const d = s.axis === "x" ? e.clientX - s.x : e.clientY - s.y;
+      onEnd?.(s.axis, d, Math.abs(d) / Math.max(1, e.timeStamp - s.t));
+    },
+    onPointerCancel() {
+      const s = start.current;
+      start.current = null;
+      if (s?.axis) onEnd?.(s.axis, 0, 0);
+    },
+    onClickCapture(e: React.MouseEvent) {
+      // The tap at the end of a swipe isn't a tap.
+      if (swiped.current) {
+        e.stopPropagation();
+        swiped.current = false;
+      }
+    },
+  };
+}
+
+function settle(el: HTMLElement | null, css: string, then?: () => void) {
+  if (!el) return then?.();
+  el.style.transition = "transform 0.2s cubic-bezier(0.2, 0, 0, 1), opacity 0.2s";
+  el.style.transform = css;
+  setTimeout(() => {
+    el.style.transition = "";
+    then?.();
+  }, 200);
+}
+
+/** Swipe right on a page to go back. */
+export function useEdgeSwipeBack() {
+  const page = () => document.querySelector<HTMLElement>(".app.phone .main");
+  return useSwipe({
+    // Things that scroll or drag sideways keep their swipes.
+    accept: (e) => !(e.target as Element).closest(".shelf-row, .seek-track, .chips, .phone-bar, .elsewhere, .pnp, .sheet, .menu, input, .eq, .qrow"),
+    onMove(axis, d) {
+      if (axis !== "x" || d <= 0 || useNav.getState().stack.length < 2) return;
+      const el = page();
+      if (el) el.style.transform = `translateX(${d * 0.6}px)`;
+    },
+    onEnd(axis, d, speed) {
+      const el = page();
+      if (axis !== "x" || useNav.getState().stack.length < 2) {
+        if (el) el.style.transform = "";
+        return;
+      }
+      if (d > 90 || (d > 40 && speed > 0.6)) useNav.getState().back();
+      else settle(el, "");
+    },
+  });
+}
 
 // ---- tabs -------------------------------------------------------------------------------
 
@@ -22,16 +111,24 @@ const TABS: [View["kind"], string, typeof Home, View][] = [
   ["library", "Your Library", Library, { kind: "library" }],
 ];
 
-/** Which tab a view belongs to. */
+/** Which tab a view belongs to; pages opened from a tab stay in that tab. */
 function tabOf(v: View) {
-  if (v.kind === "home" || v.kind === "search") return v.kind;
+  if (v.kind === "home" || v.kind === "search" || v.kind === "library") return v.kind;
+  return null;
+}
+
+function currentTab(stack: View[]) {
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const t = tabOf(stack[i]);
+    if (t) return t;
+  }
   return "library";
 }
 
 export function PhoneNav() {
-  const cur = useNav((s) => s.stack[s.stack.length - 1]);
+  const stack = useNav((s) => s.stack);
   const go = useNav((s) => s.go);
-  const tab = tabOf(cur);
+  const tab = currentTab(stack);
   return (
     <nav className="phone-nav">
       {TABS.map(([kind, label, Icon, view]) => (
@@ -40,7 +137,10 @@ export function PhoneNav() {
           className={tab === kind ? "on" : ""}
           onClick={() => {
             // Tapping the current tab again returns to its top level.
-            if (tab === kind) useNav.setState((s) => ({ stack: [...s.stack.filter((v) => tabOf(v) !== kind), view], forward: [] }));
+            if (tab === kind) {
+              const root = stack.map(tabOf).lastIndexOf(kind);
+              useNav.setState({ stack: root >= 0 ? stack.slice(0, root + 1) : [view], forward: [] });
+            }
             else go(view);
           }}
         >
@@ -64,11 +164,27 @@ export function PhoneBar() {
     const d = usePlayer.getState().duration;
     if (fill.current) fill.current.style.transform = `scaleX(${d ? Math.min(1, sec / d) : 0})`;
   });
+  const bar = useRef<HTMLDivElement>(null);
+  // Sideways to skip, up to open.
+  const swipe = useSwipe({
+    onMove(axis, d) {
+      if (bar.current && axis === "x") bar.current.style.transform = `translateX(${d}px)`;
+    },
+    onEnd(axis, d, speed) {
+      if (axis === "y") {
+        if (d < -30 || (d < -10 && speed > 0.4)) setNowPlaying(true);
+        return;
+      }
+      const far = Math.abs(d) > 90 || (Math.abs(d) > 40 && speed > 0.6);
+      settle(bar.current, "");
+      if (far) void (d < 0 ? player.next() : player.previous());
+    },
+  });
   return (
     <div className="phone-bar-wrap">
       <ElsewhereBar />
       {track && (
-        <div className="phone-bar" onClick={() => setNowPlaying(true)}>
+        <div className="phone-bar" ref={bar} onClick={() => setNowPlaying(true)} {...swipe}>
           <Cover thumb={track.thumb} className="phone-bar-art" />
           <div className="phone-bar-text">
             <div className="phone-bar-title">{track.title}</div>
@@ -104,9 +220,39 @@ export function PhoneNowPlaying() {
   const target = useRemote((s) => s.target);
   const openDevices = useDevicesSheet((s) => s.set);
   const [pane, setPane] = useState<"art" | "lyrics" | "queue">("art");
+  const sheet = useRef<HTMLDivElement>(null);
+  const art = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!nowPlaying) setPane("art");
   }, [nowPlaying]);
+  // Down to minimise, sideways to change track.
+  const swipe = useSwipe({
+    onMove(axis, d) {
+      if (axis === "y" && d > 0 && sheet.current) sheet.current.style.transform = `translateY(${d}px)`;
+      if (axis === "x" && art.current) {
+        art.current.style.transform = `translateX(${d}px) rotate(${d / 60}deg)`;
+        art.current.style.opacity = String(Math.max(0.4, 1 - Math.abs(d) / 500));
+      }
+    },
+    onEnd(axis, d, speed) {
+      if (axis === "y") {
+        if (d > 120 || (d > 50 && speed > 0.6)) {
+          settle(sheet.current, "translateY(100%)", () => {
+            if (sheet.current) sheet.current.style.transform = "";
+            setNowPlaying(false);
+          });
+        } else {
+          settle(sheet.current, "");
+        }
+        return;
+      }
+      const el = art.current;
+      const far = Math.abs(d) > 90 || (Math.abs(d) > 40 && speed > 0.6);
+      if (el) el.style.opacity = "";
+      settle(el, "");
+      if (far) void (d < 0 ? player.next() : player.previous());
+    },
+  });
   if (!nowPlaying) return null;
   const bg = track ? server().imageUrl(track.thumb, 400) : undefined;
   const goTo = (v: View) => {
@@ -114,10 +260,10 @@ export function PhoneNowPlaying() {
     go(v);
   };
   return (
-    <div className="pnp">
+    <div className="pnp" ref={sheet}>
       {bg && <div className="np-bg" style={{ backgroundImage: `url("${bg}")` }} />}
       <div className="np-shade" />
-      <header className="pnp-head">
+      <header className="pnp-head" {...swipe}>
         <button className="icon-btn" onClick={() => setNowPlaying(false)} title="Close">
           <ChevronDown size={28} />
         </button>
@@ -129,9 +275,11 @@ export function PhoneNowPlaying() {
           ⋯
         </button>
       </header>
-      <div className="pnp-body">
+      <div className={`pnp-body ${pane === "art" ? "swipeable" : ""}`} {...(pane === "art" ? swipe : {})}>
         {pane === "art" ? (
-          <Cover thumb={track?.thumb} className="pnp-art" icon="album" />
+          <div className="pnp-art-wrap" ref={art}>
+            <Cover thumb={track?.thumb} className="pnp-art" icon="album" />
+          </div>
         ) : (
           <div className="pnp-pane">{pane === "lyrics" ? <LyricsView big /> : <QueueList limit={100} />}</div>
         )}
@@ -251,6 +399,9 @@ export function LibraryView({ tab = "playlists" }: { tab?: "playlists" | "artist
             {label}
           </button>
         ))}
+        <button className="chip" onClick={() => nav.go({ kind: "local" })}>
+          On this device
+        </button>
       </div>
       {tab === "playlists" && <PlaylistRows go={nav.go} />}
       {tab === "artists" && <ArtistRows go={nav.go} />}
@@ -418,6 +569,11 @@ export function SearchView() {
         </section>
       ))}
       {q.trim().length >= 2 && !loading && !hubs.length && <p className="dim pad">Nothing found for “{q.trim()}”.</p>}
+      {lidarrConfigured() && q.trim().length >= 2 && (
+        <button className="btn request-link" onClick={() => go({ kind: "requests" })}>
+          <Inbox size={16} /> Not here? Request it
+        </button>
+      )}
     </div>
   );
 }

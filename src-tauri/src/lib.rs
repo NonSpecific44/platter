@@ -1,3 +1,4 @@
+mod library;
 mod remote;
 
 #[cfg(desktop)]

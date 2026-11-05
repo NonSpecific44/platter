@@ -1,6 +1,6 @@
 // "More like this" for Autoplay: what to play once the queue runs out.
 import { Track } from "./plex";
-import { sectionKey, server } from "./store";
+import { isExcluded, sectionKey, server } from "./store";
 
 /** Reorders so the same artist rarely plays twice in a row. */
 function spread(tracks: Track[]) {
@@ -23,7 +23,7 @@ export async function similarTracks(seeds: Track[], exclude: Set<string>, count:
   const sec = sectionKey();
   const found = new Map<string, Track>();
   const add = (tracks: Track[]) => {
-    for (const t of tracks) if (!exclude.has(t.ratingKey) && !found.has(t.ratingKey)) found.set(t.ratingKey, t);
+    for (const t of tracks) if (!exclude.has(t.ratingKey) && !isExcluded(t) && !found.has(t.ratingKey)) found.set(t.ratingKey, t);
   };
 
   await Promise.all(seeds.slice(-3).map((t) => s.nearest(t.ratingKey, 30).then(add, () => undefined)));

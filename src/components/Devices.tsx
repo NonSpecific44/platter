@@ -5,7 +5,7 @@ import { Laptop, MonitorSpeaker, Pause, Play, Smartphone, Speaker, X } from "luc
 import { usePlayer } from "../player";
 import { fmtTime } from "../store";
 import { isOurs } from "../plex";
-import { Peer, control, deviceName, disconnect, discover, isAndroid, nowPlaying, playHere, playThere, sendCommand, useRemote } from "../remote";
+import { Peer, control, deviceName, disconnect, discover, isAndroid, nowPlaying, playHere, playThere, sendCommand, useOutput, useRemote } from "../remote";
 import { Cover } from "./common";
 
 export const useDevicesSheet = create<{ open: boolean; set: (open: boolean) => void }>((set) => ({ open: false, set: (open) => set({ open }) }));
@@ -50,6 +50,7 @@ export function DevicesSheet() {
   const target = useRemote((s) => s.target);
   const scanning = useRemote((s) => s.scanning);
   const hereLoaded = usePlayer((s) => s.loaded && s.queue.length > 0);
+  const output = useOutput((s) => s.name);
   useTick(open ? 500 : 60_000);
   useEffect(() => {
     if (open) void discover();
@@ -84,7 +85,7 @@ export function DevicesSheet() {
           </span>
           <span className="dev-text">
             <span className="dev-name">This device</span>
-            <span className="dev-sub">{target ? `Tap to play here instead of ${target.name}` : deviceName()}</span>
+            <span className="dev-sub">{target ? `Tap to play here instead of ${target.name}` : output ? `${deviceName()} · ${output}` : deviceName()}</span>
           </span>
         </button>
 
@@ -110,6 +111,7 @@ export function DevicesSheet() {
                 <span className="dev-text">
                   <span className="dev-name">
                     {p.device.name}
+                    {p.device.output && <span className="dim"> · {p.device.output}</span>}
                     {!isOurDevice && <span className="dim"> · {p.device.product}</span>}
                   </span>
                   {np ? (

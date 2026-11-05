@@ -104,7 +104,10 @@ impl Media {
         let cover = meta
             .cover_url
             .as_deref()
-            .and_then(|url| self.cached_cover(&meta.key, url));
+            .and_then(|url| match url.strip_prefix("file://") {
+                Some(path) => Some(std::path::PathBuf::from(path)),
+                None => self.cached_cover(&meta.key, url),
+            });
         let cover_uri = cover.as_ref().map(|p| format!("file://{}", p.display()));
 
         if let Some(c) = self.controls.lock().unwrap().as_mut() {

@@ -2,11 +2,13 @@
 // music-library endpoints. All requests go through the Tauri HTTP plugin so
 // CORS and self-signed LAN setups don't get in the way.
 import { fetch } from "@tauri-apps/plugin-http";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { isAndroid } from "./platform";
 
 export const PRODUCT = "Platter";
 /** Earlier versions called themselves Tonearm; they speak the same protocol. */
 export const isOurs = (product: string | undefined) => product === PRODUCT || product === "Tonearm";
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 
 export function clientId(): string {
   let id = localStorage.getItem("tonearm.clientId");
@@ -17,15 +19,23 @@ export function clientId(): string {
   return id;
 }
 
+let plexDeviceName: string = PRODUCT;
+
+/** What Plex shows in its activity list and dashboard: "Platter - <device name>". */
+export function setPlexDeviceName(name: string) {
+  plexDeviceName = name ? `${PRODUCT} - ${name}` : PRODUCT;
+}
+
 export function plexHeaders(token?: string): Record<string, string> {
+  const platform = isAndroid() ? "Android" : "Linux";
   const h: Record<string, string> = {
     Accept: "application/json",
     "X-Plex-Client-Identifier": clientId(),
     "X-Plex-Product": PRODUCT,
     "X-Plex-Version": VERSION,
-    "X-Plex-Platform": "Linux",
-    "X-Plex-Device": "Linux",
-    "X-Plex-Device-Name": PRODUCT,
+    "X-Plex-Platform": platform,
+    "X-Plex-Device": platform,
+    "X-Plex-Device-Name": plexDeviceName,
     "X-Plex-Provides": "player",
   };
   if (token) h["X-Plex-Token"] = token;
@@ -88,34 +98,6 @@ export async function getServers(token: string): Promise<Resource[]> {
   return rs.filter((r) => r.provides.split(",").includes("server"));
 }
 
-/** Pick the best reachable connection: LAN first, then direct remote, then relay. */
-export async function findConnection(res: Resource): Promise<Connection> {
-  const tiers = [
-    res.connections.filter((c) => c.local && !c.relay),
-    res.connections.filter((c) => !c.local && !c.relay),
-    res.connections.filter((c) => c.relay),
-  ];
-  for (const tier of tiers) {
-    if (!tier.length) continue;
-    try {
-      return await Promise.any(
-        tier.map(async (c) => {
-          const r = await fetch(c.uri + "/identity", {
-            headers: plexHeaders(res.accessToken),
-            connectTimeout: 4000,
-            signal: AbortSignal.timeout(6000),
-          });
-          if (!r.ok) throw new Error(String(r.status));
-          return c;
-        }),
-      );
-    } catch {
-      /* try next tier */
-    }
-  }
-  throw new Error(`Couldn't reach ${res.name} on any of its addresses`);
-}
-
 // ---- library model ---------------------------------------------------------
 
 export interface Track {
@@ -135,6 +117,14 @@ export interface Track {
   codec?: string;
   bitrate?: number;
   playlistItemID?: number;
+  sampleRate?: number;
+  bitDepth?: number;
+  /** Path of a file on this device; such tracks have keys starting "local". */
+  local?: string;
+  downloaded?: boolean;
+  /** Loudness correction in dB, from tags or Plex's analysis. */
+  gain?: number;
+  albumGain?: number;
   /** Where playback stopped last time, on any Plex player (ms). */
   viewOffset?: number;
   lastViewedAt?: number; // unix seconds
@@ -184,6 +174,14 @@ export interface Hub {
 }
 
 const tags = (xs?: { tag: string }[]) => xs?.map((x) => x.tag);
+
+/** "FLAC", "MP3", "WAV"… from the codec Plex reports or the file extension. */
+export function fileType(t: Pick<Track, "codec" | "partKey">) {
+  const raw = t.codec || t.partKey?.split("?")[0].split(".").pop() || "";
+  const c = raw.toLowerCase();
+  if (!c || c.length > 8 || c.includes("/")) return "";
+  return ({ pcm: "WAV", wave: "WAV", aac: "AAC", m4a: "AAC", vorbis: "OGG", ogg: "OGG", mp3: "MP3", alac: "ALAC", opus: "OPUS", dca: "DTS" } as Record<string, string>)[c] ?? c.toUpperCase();
+}
 
 export function toTrack(m: any): Track {
   const media = m.Media?.[0];
@@ -269,12 +267,29 @@ export function convert(m: any): Album | Artist | Track | Playlist {
 
 // ---- server ----------------------------------------------------------------
 
+export interface LocalProvider {
+  album(key: string): Album;
+  albumTracks(key: string): Track[];
+  artist(key: string): Artist;
+  artistAlbums(key: string): Album[];
+  artistTracks(key: string): Track[];
+  search(query: string, plex: Hub[]): Hub[];
+  shelf(): Hub | null;
+}
+
+/** Answers for music on this device; see local.ts. */
+let local: LocalProvider | null = null;
+export const setLocalProvider = (p: LocalProvider) => (local = p);
+const isLocal = (key: string) => key.startsWith("local");
+
 export interface ServerInfo {
   uri: string;
   token: string;
   machineId: string;
   name: string;
   local: boolean;
+  /** Every address the server advertises, so switching networks is instant. */
+  connections?: Connection[];
 }
 
 type Params = Record<string, string | number | undefined>;
@@ -302,6 +317,7 @@ export class Server {
 
   imageUrl(thumb: string | undefined, size = 300) {
     if (!thumb) return undefined;
+    if (thumb.startsWith("local-cover:")) return convertFileSrc(thumb.slice(12));
     return this.url("/photo/:/transcode", {
       width: size,
       height: size,
@@ -368,16 +384,25 @@ export class Server {
   }
 
   async hubs(section: string): Promise<Hub[]> {
-    const c = await this.container(`/hubs/sections/${section}`, { count: 16, includeLibraryPlaylists: 1 });
-    return (c.Hub ?? [])
-      .filter((h: any) => h.Metadata?.length)
-      .map((h: any) => ({
-        title: h.title,
-        type: h.type,
-        hubIdentifier: h.hubIdentifier,
-        itemType: h.Metadata[0]?.type ?? h.type,
-        items: h.Metadata.map(convert),
-      }));
+    const shelf = local?.shelf();
+    let hubs: Hub[];
+    try {
+      const c = await this.container(`/hubs/sections/${section}`, { count: 16, includeLibraryPlaylists: 1 });
+      hubs = (c.Hub ?? [])
+        .filter((h: any) => h.Metadata?.length)
+        .map((h: any) => ({
+          title: h.title,
+          type: h.type,
+          hubIdentifier: h.hubIdentifier,
+          itemType: h.Metadata[0]?.type ?? h.type,
+          items: h.Metadata.map(convert),
+        }));
+    } catch (e) {
+      // Offline: what's on this device still works.
+      if (!shelf) throw e;
+      hubs = [];
+    }
+    return shelf ? [shelf, ...hubs] : hubs;
   }
 
   async randomAlbums(section: string, count: number) {
@@ -401,20 +426,24 @@ export class Server {
   }
 
   async artist(key: string) {
+    if (isLocal(key)) return local!.artist(key);
     return toArtist(await this.metadata(key));
   }
 
   async artistAlbums(key: string) {
+    if (isLocal(key)) return local!.artistAlbums(key);
     const c = await this.container(`/library/metadata/${key}/children`, { excludeAllLeaves: 1 });
     return (c.Metadata ?? []).map(toAlbum) as Album[];
   }
 
   async artistTracks(key: string) {
+    if (isLocal(key)) return local!.artistTracks(key);
     const c = await this.container(`/library/metadata/${key}/allLeaves`);
     return (c.Metadata ?? []).map(toTrack) as Track[];
   }
 
   async popularTracks(section: string, artistKey: string) {
+    if (isLocal(artistKey)) return [];
     try {
       const p = await this.page(
         `/library/sections/${section}/all`,
@@ -429,10 +458,12 @@ export class Server {
   }
 
   async album(key: string) {
+    if (isLocal(key)) return local!.album(key);
     return toAlbum(await this.metadata(key));
   }
 
   async albumTracks(key: string) {
+    if (isLocal(key)) return local!.albumTracks(key);
     const c = await this.container(`/library/metadata/${key}/children`);
     return (c.Metadata ?? []).map(toTrack) as Track[];
   }
@@ -481,6 +512,16 @@ export class Server {
   }
 
   async search(section: string, query: string): Promise<Hub[]> {
+    let plex: Hub[] = [];
+    try {
+      plex = await this.plexSearch(section, query);
+    } catch (e) {
+      if (!local) throw e;
+    }
+    return [...(local?.search(query, plex) ?? []), ...plex];
+  }
+
+  private async plexSearch(section: string, query: string): Promise<Hub[]> {
     const c = await this.container("/hubs/search", { query, sectionId: section, limit: 8 });
     return (c.Hub ?? [])
       .filter((h: any) => h.Metadata?.length && ["artist", "album", "track", "playlist"].includes(h.type))
@@ -494,6 +535,7 @@ export class Server {
   }
 
   rate(key: string, rating: number | null) {
+    if (isLocal(key)) return Promise.resolve();
     return this.request(
       "/:/rate",
       { key, identifier: "com.plexapp.plugins.library", rating: rating ?? -1 },
@@ -506,6 +548,7 @@ export class Server {
    * which other Plex apps and Platter on other devices resume from.
    */
   timeline(t: Track, state: "playing" | "paused" | "stopped", timeMs: number, session: string) {
+    if (isLocal(t.ratingKey)) return Promise.resolve(undefined);
     const params = {
       ratingKey: t.ratingKey,
       key: `/library/metadata/${t.ratingKey}`,
@@ -534,11 +577,13 @@ export class Server {
   }
 
   scrobble(key: string) {
+    if (isLocal(key)) return Promise.resolve(undefined);
     return this.request("/:/scrobble", { key, identifier: "com.plexapp.plugins.library" }).catch(() => undefined);
   }
 
   /** Streams (lyrics, audio) for a track; the list endpoints don't include them. */
   async trackStreams(key: string): Promise<any[]> {
+    if (isLocal(key)) return [];
     const m = await this.metadata(key);
     return m?.Media?.[0]?.Part?.[0]?.Stream ?? [];
   }

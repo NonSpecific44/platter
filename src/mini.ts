@@ -3,7 +3,19 @@ import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useNav } from "./store";
 import { isAndroid } from "./platform";
 
-const MINI = { w: 440, h: 104 };
+const SIZE_KEY = "tonearm.miniSize";
+
+/** The mini player's window can be resized; it opens at the size it last had. */
+function miniSize() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SIZE_KEY) ?? "");
+    if (saved.w >= 260 && saved.h >= 80) return saved as { w: number; h: number };
+  } catch {
+    /* first use */
+  }
+  return { w: 440, h: 104 };
+}
+
 let previous: { w: number; h: number } | null = null;
 
 export async function toggleMini() {
@@ -17,8 +29,12 @@ export async function toggleMini() {
       previous = { w: size.width / scale, h: size.height / scale };
       nav.setMini(true);
       await win.setAlwaysOnTop(true);
-      await win.setSize(new LogicalSize(MINI.w, MINI.h));
+      const mini = miniSize();
+      await win.setSize(new LogicalSize(mini.w, mini.h));
     } else {
+      const size = await win.innerSize();
+      const scale = await win.scaleFactor();
+      localStorage.setItem(SIZE_KEY, JSON.stringify({ w: size.width / scale, h: size.height / scale }));
       nav.setMini(false);
       await win.setAlwaysOnTop(false);
       await win.setSize(new LogicalSize(previous?.w ?? 1280, previous?.h ?? 820));

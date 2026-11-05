@@ -5,5 +5,6 @@ export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   server: { port: 1420, strictPort: true },
-  build: { target: "es2022", chunkSizeWarningLimit: 1500 },
+  // Old enough for the system WebView on early Android 12 builds.
+  build: { target: "chrome89", cssTarget: "chrome89", chunkSizeWarningLimit: 1500 },
 });

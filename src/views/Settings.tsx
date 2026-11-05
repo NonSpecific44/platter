@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { LogOut, RefreshCw, Server as ServerIcon, Trash2 } from "lucide-react";
+import { FolderPlus, LogOut, RefreshCw, Server as ServerIcon, Trash2, X } from "lucide-react";
 import { audioDevices, player, usePlayer } from "../player";
-import { EQ_BANDS, EQ_PRESETS, Settings, useSession, useSettings, useNav } from "../store";
-import { addToPlaylist } from "../actions";
+import { EQ_BANDS, EQ_PRESETS, Settings, setExcluded, useSession, useSettings, useNav } from "../store";
+import { addToPlaylist, prompt } from "../actions";
+import { addFolder, removeFolder, scanLocal, storageRoots, useLocal } from "../local";
+import { LidarrOptions, lidarrOptions } from "../lidarr";
+import { SCHEMES } from "../theme";
 import { TrackList } from "../components/common";
 import { QueueList } from "../components/Panels";
 import { measureFrameRate } from "../smooth";
@@ -108,13 +111,41 @@ function Equalizer() {
       <div className="row gap">
         <select
           value={s.eqPreset}
-          onChange={(e) => EQ_PRESETS[e.target.value] && s.set({ eqPreset: e.target.value, eqGains: [...EQ_PRESETS[e.target.value]], eqEnabled: true })}
+          onChange={(e) => {
+            const gains = s.eqUserPresets[e.target.value] ?? EQ_PRESETS[e.target.value];
+            if (gains) s.set({ eqPreset: e.target.value, eqGains: [...gains], eqEnabled: true });
+          }}
         >
           {Object.keys(EQ_PRESETS).map((p) => (
             <option key={p}>{p}</option>
           ))}
+          {Object.keys(s.eqUserPresets).map((p) => (
+            <option key={p}>{p}</option>
+          ))}
           {s.eqPreset === "Custom" && <option>Custom</option>}
         </select>
+        {s.eqPreset === "Custom" && (
+          <button
+            className="btn ghost"
+            onClick={async () => {
+              const name = await prompt("Name this preset");
+              if (name) s.set({ eqUserPresets: { ...s.eqUserPresets, [name]: [...s.eqGains] }, eqPreset: name });
+            }}
+          >
+            Save preset
+          </button>
+        )}
+        {s.eqUserPresets[s.eqPreset] && (
+          <button
+            className="btn ghost"
+            onClick={() => {
+              const { [s.eqPreset]: _gone, ...rest } = s.eqUserPresets;
+              s.set({ eqUserPresets: rest, eqPreset: "Custom" });
+            }}
+          >
+            Delete preset
+          </button>
+        )}
         <button className="btn ghost" onClick={() => s.set({ eqGains: [...EQ_PRESETS.Flat], eqPreset: "Flat", eqPreamp: 0 })}>
           Reset
         </button>
@@ -206,6 +237,144 @@ function FrameRate() {
 
 const android = isAndroid();
 
+/** Picks a folder: the system dialog on desktop, a list and a path box on Android. */
+export async function addMusicFolder() {
+  if (!android) {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const picked = await open({ directory: true, multiple: false, title: "Add a music folder" });
+    if (typeof picked === "string") addFolder(picked);
+    return;
+  }
+  const roots = await storageRoots();
+  const path = await prompt(`Folder path${roots.length ? ` (for example ${roots[0]})` : ""}`, roots[0] ?? "");
+  if (path) addFolder(path);
+}
+
+function LocalSettings() {
+  const folders = useSettings((s) => s.localFolders);
+  const { scanning, tracks } = useLocal();
+  const go = useNav((s) => s.go);
+  return (
+    <section className="set-group">
+      <h2>Music on this device</h2>
+      <Row label="Folders" hint={`${tracks.length.toLocaleString()} tracks. If a song is also on Plex, it appears once and the local file plays.`}>
+        <div className="row gap">
+          <button className="btn" onClick={() => void addMusicFolder()}>
+            <FolderPlus size={15} /> Add folder
+          </button>
+          <button className="btn ghost" disabled={scanning} onClick={() => void scanLocal(true)}>
+            {scanning ? "Scanning…" : "Scan now"}
+          </button>
+          <button className="btn ghost" onClick={() => go({ kind: "local" })}>
+            Open
+          </button>
+        </div>
+      </Row>
+      {folders.map((f) => (
+        <Row key={f} label={f}>
+          <button className="icon-btn" title="Remove from library (your files aren't touched)" onClick={() => removeFolder(f)}>
+            <X size={16} />
+          </button>
+        </Row>
+      ))}
+      <Row label="Look up files with missing tags" hint="Sends the file's name to musicbrainz.org when a track has no usable tags">
+        <Toggle k="localAutoMatch" />
+      </Row>
+    </section>
+  );
+}
+
+function LidarrSettings() {
+  const s = useSettings();
+  const [opts, setOpts] = useState<LidarrOptions | null>(null);
+  const [status, setStatus] = useState("");
+  const test = async () => {
+    setStatus("Connecting…");
+    try {
+      const o = await lidarrOptions();
+      setOpts(o);
+      s.set({
+        lidarrRoot: s.lidarrRoot || o.roots[0]?.path || "",
+        lidarrQuality: s.lidarrQuality || o.quality[0]?.id || 0,
+        lidarrMetadata: s.lidarrMetadata || o.metadata[0]?.id || 0,
+      });
+      setStatus("Connected");
+    } catch (e) {
+      setOpts(null);
+      setStatus(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return (
+    <section className="set-group">
+      <h2>Lidarr requests</h2>
+      <Row label="Address" hint="For example http://192.168.1.10:8686">
+        <input className="text-input" value={s.lidarrUrl} placeholder="http://…:8686" onChange={(e) => s.set({ lidarrUrl: e.target.value })} />
+      </Row>
+      <Row label="API key" hint="In Lidarr: Settings → General → Security">
+        <input className="text-input" type="password" value={s.lidarrKey} onChange={(e) => s.set({ lidarrKey: e.target.value })} />
+      </Row>
+      <Row label="Connection" hint={status || undefined}>
+        <div className="row gap">
+          <button className="btn" disabled={!s.lidarrUrl || !s.lidarrKey} onClick={test}>
+            Test
+          </button>
+          <button className="btn ghost" onClick={() => useNav.getState().go({ kind: "requests" })}>
+            Request music
+          </button>
+        </div>
+      </Row>
+      {opts && (
+        <>
+          <Row label="Save new music to">
+            <select value={s.lidarrRoot} onChange={(e) => s.set({ lidarrRoot: e.target.value })}>
+              {opts.roots.map((r) => (
+                <option key={r.path}>{r.path}</option>
+              ))}
+            </select>
+          </Row>
+          <Row label="Quality profile">
+            <select value={s.lidarrQuality} onChange={(e) => s.set({ lidarrQuality: Number(e.target.value) })}>
+              {opts.quality.map((q) => (
+                <option key={q.id} value={q.id}>
+                  {q.name}
+                </option>
+              ))}
+            </select>
+          </Row>
+          <Row label="Metadata profile">
+            <select value={s.lidarrMetadata} onChange={(e) => s.set({ lidarrMetadata: Number(e.target.value) })}>
+              {opts.metadata.map((q) => (
+                <option key={q.id} value={q.id}>
+                  {q.name}
+                </option>
+              ))}
+            </select>
+          </Row>
+        </>
+      )}
+    </section>
+  );
+}
+
+function Exclusions() {
+  const x = useSettings((s) => s.exclusions);
+  const rows = (["artists", "albums", "tracks"] as const).flatMap((kind) => Object.entries(x[kind]).map(([key, name]) => ({ kind, key, name })));
+  return (
+    <>
+      <Row label="Excluded from autoplay and shuffle" hint={rows.length ? undefined : "Choose “Exclude from autoplay” on any track or album. You can still play them yourself."}>
+        <span className="dim small">{rows.length || "None"}</span>
+      </Row>
+      {rows.map((r) => (
+        <Row key={r.kind + r.key} label={r.name} hint={r.kind === "artists" ? "Artist" : r.kind === "albums" ? "Album" : "Track"}>
+          <button className="icon-btn" title="Allow again" onClick={() => setExcluded(r.kind, r.key, null)}>
+            <X size={16} />
+          </button>
+        </Row>
+      ))}
+    </>
+  );
+}
+
 function Updates() {
   const { current, latest, checking, installing, error } = useUpdates();
   const s = useSettings();
@@ -294,19 +463,29 @@ export function SettingsView() {
         </Row>
           </>
         )}
-{!android && (
-          <>
-        <Row label="Volume normalisation" hint="Uses ReplayGain tags in your files">
-          <Select k="replaygain" options={[["no", "Off"], ["track", "Per track"], ["album", "Per album (recommended)"]]} />
+        <Row label="Volume normalisation" hint={android ? "Uses Plex's loudness analysis, or ReplayGain tags" : "Uses Plex's loudness analysis, or ReplayGain tags. Dynamic levels everything live, including files nothing has analysed."}>
+          <Select k="replaygain" options={android ? [["no", "Off"], ["track", "Per track"], ["album", "Per album (recommended)"]] : [["no", "Off"], ["track", "Per track"], ["album", "Per album (recommended)"], ["dynamic", "Dynamic"]]} />
         </Row>
-        <Row label="ReplayGain pre-amp" hint={`${s.replaygainPreamp > 0 ? "+" : ""}${s.replaygainPreamp} dB`}>
+        <Row label="Normalisation pre-amp" hint={`${s.replaygainPreamp > 0 ? "+" : ""}${s.replaygainPreamp} dB`}>
           <input type="range" min={-15} max={15} step={1} value={s.replaygainPreamp} onChange={(e) => s.set({ replaygainPreamp: Number(e.target.value) })} />
         </Row>
-          </>
-        )}
+          
         <Row label="Playback speed" hint="Pitch is preserved">
           <Select k="speed" options={[[0.75, "0.75×"], [0.9, "0.9×"], [1, "Normal"], [1.1, "1.1×"], [1.25, "1.25×"], [1.5, "1.5×"], [2, "2×"]]} />
         </Row>
+        <Row label="Crossfade" hint="Blend each track into the next">
+          <Toggle k="crossfade" />
+        </Row>
+        {s.crossfade && (
+          <>
+            <Row label="Crossfade length" hint={`${s.crossfadeSeconds} seconds`}>
+              <input type="range" min={1} max={12} step={1} value={s.crossfadeSeconds} onChange={(e) => s.set({ crossfadeSeconds: Number(e.target.value) })} />
+            </Row>
+            <Row label="Keep albums gapless" hint="No crossfade between tracks from the same album">
+              <Toggle k="crossfadeSkipAlbums" />
+            </Row>
+          </>
+        )}
         <Row label="Autoplay" hint="When the queue ends, keep playing similar music">
           <Toggle k="autoplay" />
         </Row>
@@ -316,6 +495,7 @@ export function SettingsView() {
         <Row label="Smart shuffle" hint="Avoid playing the same artist twice in a row">
           <Toggle k="smartShuffle" />
         </Row>
+        <Exclusions />
         <Row label="Transcoding" hint="Lower bitrate for slow or metered connections">
           <div className="row gap">
             <Select k="transcode" options={[["never", "Never (original quality)"], ["remote", "Only when remote"], ["always", "Always"]]} />
@@ -324,16 +504,13 @@ export function SettingsView() {
         </Row>
       </section>
 
-{!android && (
-          <>
       <section className="set-group">
         <h2>
           Equalizer <Toggle k="eqEnabled" />
         </h2>
         <Equalizer />
       </section>
-          </>
-        )}
+          
 
       <section className="set-group">
         <h2>Appearance</h2>
@@ -346,14 +523,23 @@ export function SettingsView() {
         <Row label="Accent colour" hint={s.accentFromArt ? "Used when nothing is playing" : undefined}>
           <input type="color" value={s.accent} onChange={(e) => s.set({ accent: e.target.value })} />
         </Row>
-        <Row label="Interface size" hint={`${Math.round(s.uiScale * 100)}%  (Ctrl + / Ctrl −)`}>
+        <Row label="Interface size" hint={android ? `${Math.round(s.uiScale * 100)}%` : `${Math.round(s.uiScale * 100)}%  (Ctrl + / Ctrl −)`}>
           <input type="range" min={0.8} max={1.5} step={0.05} value={s.uiScale} onChange={(e) => s.set({ uiScale: Number(e.target.value) })} />
         </Row>
         <FrameRate />
-        <Row label="Waveform seek bar" hint="Needs Plex sonic analysis on the library">
-          <Toggle k="showWaveform" />
+        <Row label="Colour scheme" hint={s.colorScheme === "material" ? "Follows your wallpaper colours on Android 12 and newer" : undefined}>
+          <Select k="colorScheme" options={Object.entries(SCHEMES).map(([k, v]) => [k, v.label] as [string, string])} />
+        </Row>
+        <Row label="Style" hint="Material uses rounder shapes and larger controls">
+          <Select k="design" options={[["material", "Material"], ["classic", "Classic"]]} />
+        </Row>
+        <Row label="Seek bar" hint={s.seekStyle === "waveform" ? "Needs Plex sonic analysis on the library; otherwise shows a plain bar" : undefined}>
+          <Select k="seekStyle" options={[["waveform", "Waveform"], ["wavy", "Wavy (Android style)"], ["bar", "Plain bar"]]} />
         </Row>
       </section>
+
+      <LocalSettings />
+      <LidarrSettings />
 
       <section className="set-group">
         <h2>Lyrics</h2>

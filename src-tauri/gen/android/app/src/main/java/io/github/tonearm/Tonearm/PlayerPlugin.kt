@@ -1,6 +1,18 @@
 package io.github.tonearm.Tonearm
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import android.media.audiofx.Equalizer
+import android.media.audiofx.LoudnessEnhancer
+import android.net.ConnectivityManager
+import android.net.Network
+import android.os.Environment
+import androidx.media3.exoplayer.ExoPlayer
+import org.json.JSONArray
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
@@ -61,6 +73,24 @@ class UpdateArgs {
 }
 
 @InvokeArg
+class CrossfadeArgs {
+  lateinit var url: String
+  var next: String? = null
+  var seconds: Double = 6.0
+}
+
+@InvokeArg
+class BarsArgs {
+  lateinit var color: String
+  var dark: Boolean = true
+}
+
+@InvokeArg
+class ConfigArgs {
+  lateinit var json: String
+}
+
+@InvokeArg
 class MetaArgs {
   var title: String = ""
   var artist: String = ""
@@ -82,24 +112,47 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
   private var webView: WebView? = null
   private var controller: MediaController? = null
   private var multicastLock: WifiManager.MulticastLock? = null
+  private var attached: ExoPlayer? = null
   private val player get() = PlaybackService.player(activity.applicationContext)
+  private var foreground = true
 
   override fun load(webView: WebView) {
     this.webView = webView
-    val p = player
-    p.addListener(listener)
+    attach(player)
     PlaybackService.onControl = { action -> emit("control", JSONObject().put("action", action)) }
     // Binding a controller starts the session service, which shows the media notification.
     val token = SessionToken(activity, ComponentName(activity, PlaybackService::class.java))
     val future = MediaController.Builder(activity, token).buildAsync()
     future.addListener({ controller = runCatching { future.get() }.getOrNull() }, { main.post(it) })
-    // Lets other Tonearms find this one (GDM discovery is multicast).
+    // Lets other Platters find this one (GDM discovery is multicast). Only held while the app is
+    // on screen: it keeps the Wi-Fi radio busier, which costs battery.
     val wifi = activity.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-    multicastLock = wifi?.createMulticastLock("tonearm-discovery")?.apply {
+    multicastLock = wifi?.createMulticastLock("platter-discovery")?.apply {
       setReferenceCounted(false)
       acquire()
     }
-    main.post(ticker)
+    watchNetwork()
+    watchOutput()
+    schedule()
+  }
+
+  override fun onPause() {
+    foreground = false
+    multicastLock?.let { if (it.isHeld) it.release() }
+  }
+
+  override fun onResume() {
+    foreground = true
+    multicastLock?.let { if (!it.isHeld) it.acquire() }
+    schedule()
+  }
+
+  private fun attach(p: ExoPlayer) {
+    attached?.removeListener(listener)
+    p.addListener(listener)
+    attached = p
+    applyEffects()
+    applyVolume()
   }
 
   private fun emit(event: String, payload: Any) {
@@ -122,8 +175,9 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   private var lastState = ""
+  private var ticking = false
 
-  /** Position updates while playing; any other change goes out as soon as it happens. */
+  /** Position updates only while playing, and slowly when nobody's looking at the screen. */
   private val ticker = object : Runnable {
     override fun run() {
       val s = stateJson()
@@ -132,13 +186,28 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         lastState = key
         emit("state", s)
       }
-      main.postDelayed(this, 250)
+      if (player.isPlaying) {
+        main.postDelayed(this, if (foreground) 500 else 2000)
+      } else {
+        ticking = false
+      }
     }
+  }
+
+  private fun schedule() {
+    if (ticking) return
+    ticking = true
+    main.post(ticker)
   }
 
   private val listener = object : Player.Listener {
     override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
       val uri = item?.localConfiguration?.uri?.toString() ?: return
+      if (PlaybackService.nativeQueue) {
+        // Android Auto started this queue while the app is open: the app takes it over.
+        emit("external", takeOverJson() ?: "null")
+        return
+      }
       emit("file", JSONObject.quote(uri))
       // Keep only the current item and whatever follows it, like the desktop backend.
       val p = player
@@ -148,15 +217,266 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     override fun onPlaybackStateChanged(state: Int) {
       if (state == Player.STATE_ENDED) emit("idle", "null")
       emit("state", stateJson())
+      schedule()
     }
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
       emit("state", stateJson())
+      schedule()
     }
+
+    override fun onAudioSessionIdChanged(audioSessionId: Int) = applyEffects()
 
     override fun onPlayerError(error: PlaybackException) {
       emit("error", JSONObject.quote(error.message ?: "playback error"))
     }
+  }
+
+  /** The queue Android Auto is playing, for the app to take over. */
+  private fun takeOverJson(): String? {
+    val p = player
+    if (!PlaybackService.nativeQueue || p.mediaItemCount == 0) return null
+    val tracks = JSONArray()
+    for (i in 0 until p.mediaItemCount) {
+      val raw = p.getMediaItemAt(i).mediaMetadata.extras?.getString(AutoLibrary.EXTRA_JSON) ?: return null
+      tracks.put(JSONObject(raw))
+    }
+    return JSONObject()
+      .put("tracks", tracks)
+      .put("index", p.currentMediaItemIndex)
+      .put("position", p.currentPosition / 1000.0)
+      .put("paused", !p.playWhenReady)
+      .toString()
+  }
+
+  @Command
+  fun takeOver(invoke: Invoke) {
+    main.post { invoke.resolve(JSObject().put("value", takeOverJson().orEmpty())) }
+  }
+
+  // ---- effects -----------------------------------------------------------------------------
+
+  private var eqConfig: JSONObject? = null
+  private var gainDb = 0.0
+  private var equalizer: Equalizer? = null
+  private var enhancer: LoudnessEnhancer? = null
+  private var effectsSession = 0
+
+  /** The system equaliser has its own bands; each takes the setting closest to its frequency. */
+  private fun applyEffects() {
+    val session = runCatching { player.audioSessionId }.getOrDefault(0)
+    if (session <= 0) return
+    try {
+      if (session != effectsSession) {
+        equalizer?.release()
+        enhancer?.release()
+        equalizer = null
+        enhancer = null
+        effectsSession = session
+      }
+      val cfg = eqConfig
+      if (cfg == null) {
+        equalizer?.enabled = false
+      } else {
+        val eq = equalizer ?: Equalizer(0, session).also { equalizer = it }
+        val bands = cfg.getJSONArray("bands")
+        val preamp = cfg.optDouble("preamp", 0.0)
+        val range = eq.bandLevelRange
+        for (b in 0 until eq.numberOfBands) {
+          val hz = eq.getCenterFreq(b.toShort()) / 1000.0
+          var best = 0.0
+          var bestDistance = Double.MAX_VALUE
+          for (i in 0 until bands.length()) {
+            val pair = bands.getJSONArray(i)
+            val d = Math.abs(Math.log(pair.getDouble(0) / hz))
+            if (d < bestDistance) {
+              bestDistance = d
+              best = pair.getDouble(1)
+            }
+          }
+          val mb = ((best + preamp) * 100).toInt().coerceIn(range[0].toInt(), range[1].toInt())
+          eq.setBandLevel(b.toShort(), mb.toShort())
+        }
+        eq.enabled = true
+      }
+      val le = enhancer ?: if (gainDb > 0) LoudnessEnhancer(session).also { enhancer = it } else null
+      le?.setTargetGain(((if (gainDb > 0) gainDb else 0.0) * 100).toInt())
+      le?.enabled = gainDb > 0
+    } catch (e: Exception) {
+      // Some devices don't offer these effects; playback carries on without them.
+    }
+  }
+
+  /** ExoPlayer can only turn down, so cuts go through volume and boosts through the enhancer. */
+  private fun applyVolume(fade: Float = 1f) {
+    val base = if (PlaybackService.muted) 0f else PlaybackService.volume
+    val cut = if (gainDb < 0) Math.pow(10.0, gainDb / 20.0).toFloat() else 1f
+    player.volume = base * cut * fade
+  }
+
+  // ---- crossfade -----------------------------------------------------------------------------
+
+  private var fadeGeneration = 0
+  private var outgoing: ExoPlayer? = null
+
+  private fun cancelFade() {
+    fadeGeneration++
+    outgoing?.release()
+    outgoing = null
+    applyVolume()
+  }
+
+  /** Starts [CrossfadeArgs.url] on a second player, ramps across, then releases the first. */
+  @Command
+  fun crossfade(invoke: Invoke) {
+    val args = invoke.parseArgs(CrossfadeArgs::class.java)
+    onMain(invoke) {
+      cancelFade()
+      val gen = fadeGeneration
+      val old = player
+      old.clearMediaItems(keepCurrent = true)
+      val next = PlaybackService.newPlayer(activity.applicationContext, handleFocus = false)
+      next.volume = 0f
+      next.setMediaItem(item(args.url))
+      args.next?.let { next.addMediaItem(item(it)) }
+      next.playWhenReady = true
+      next.prepare()
+      old.removeListener(listener)
+      outgoing = old
+      PlaybackService.swapPlayer(next)
+      attach(next)
+      next.volume = 0f
+      val total = (args.seconds * 1000).toLong().coerceAtLeast(100)
+      val startVolume = old.volume
+      var elapsed = 0L
+      main.post(object : Runnable {
+        override fun run() {
+          if (gen != fadeGeneration) return
+          if (next.isPlaying) elapsed += 50
+          val x = (elapsed.toFloat() / total).coerceIn(0f, 1f)
+          old.volume = startVolume * (1f - x)
+          applyVolume(x)
+          if (x < 1f) {
+            main.postDelayed(this, 50)
+          } else {
+            old.release()
+            outgoing = null
+            PlaybackService.takeFocus(next)
+          }
+        }
+      })
+    }
+  }
+
+  private fun ExoPlayer.clearMediaItems(keepCurrent: Boolean) {
+    if (keepCurrent && mediaItemCount > currentMediaItemIndex + 1) removeMediaItems(currentMediaItemIndex + 1, mediaItemCount)
+  }
+
+  // ---- device state --------------------------------------------------------------------------
+
+  private fun watchNetwork() {
+    val cm = activity.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+    cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+      override fun onAvailable(network: Network) = emit("network", "null")
+      override fun onLost(network: Network) = emit("network", "null")
+    })
+  }
+
+  /** Headphones and other outputs, by name. */
+  private fun currentOutput(am: AudioManager): String? {
+    val outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+    val order = listOf(
+      AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLE_SPEAKER,
+      AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+    )
+    for (type in order) {
+      val d = outputs.firstOrNull { it.type == type } ?: continue
+      val name = d.productName?.toString().orEmpty()
+      val wired = type == AudioDeviceInfo.TYPE_WIRED_HEADSET || type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES
+      return if (wired || name.isBlank() || name == Build.MODEL) "Wired headphones" else name
+    }
+    return null
+  }
+
+  private fun watchOutput() {
+    val am = activity.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+    val report = { emit("output", JSONObject.quote(currentOutput(am).orEmpty())) }
+    am.registerAudioDeviceCallback(object : AudioDeviceCallback() {
+      override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>?) { report() }
+      override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>?) { report() }
+    }, main)
+    report()
+  }
+
+  // ---- system bits ---------------------------------------------------------------------------
+
+  /** Leaves the app running behind whatever's next, so music keeps playing. */
+  @Command
+  fun background(invoke: Invoke) {
+    onMain(invoke) { activity.moveTaskToBack(true) }
+  }
+
+  /** Colours the strips behind the status and navigation bars to match the theme. */
+  @Command
+  fun systemBars(invoke: Invoke) {
+    val args = invoke.parseArgs(BarsArgs::class.java)
+    onMain(invoke) {
+      activity.findViewById<android.view.View>(android.R.id.content).setBackgroundColor(android.graphics.Color.parseColor(args.color))
+      androidx.core.view.WindowInsetsControllerCompat(activity.window, activity.window.decorView).apply {
+        isAppearanceLightStatusBars = !args.dark
+        isAppearanceLightNavigationBars = !args.dark
+      }
+    }
+  }
+
+  @Command
+  fun autoConfig(invoke: Invoke) {
+    val args = invoke.parseArgs(ConfigArgs::class.java)
+    AutoLibrary.saveConfig(activity.applicationContext, args.json)
+    invoke.resolve()
+  }
+
+  /** Wallpaper-based Material You colours (Android 12+). */
+  @Command
+  fun dynamicColors(invoke: Invoke) {
+    val o = JSObject()
+    if (Build.VERSION.SDK_INT >= 31) {
+      val c = activity.applicationContext
+      val hex = { id: Int -> String.format("#%06x", c.getColor(id) and 0xffffff) }
+      o.put("a200", hex(android.R.color.system_accent1_200))
+      o.put("a600", hex(android.R.color.system_accent1_600))
+      o.put("n10", hex(android.R.color.system_neutral1_10))
+      o.put("n50", hex(android.R.color.system_neutral1_50))
+      o.put("n100", hex(android.R.color.system_neutral2_100))
+      o.put("n200", hex(android.R.color.system_neutral2_200))
+      o.put("n700", hex(android.R.color.system_neutral2_700))
+      o.put("n800", hex(android.R.color.system_neutral2_800))
+      o.put("n900", hex(android.R.color.system_neutral1_900))
+    }
+    invoke.resolve(o)
+  }
+
+  @Command
+  fun requestAccess(invoke: Invoke) {
+    val perm = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
+    if (activity.checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) activity.requestPermissions(arrayOf(perm), 2)
+    invoke.resolve()
+  }
+
+  /** Likely music folders, including removable cards. */
+  @Command
+  fun storageRoots(invoke: Invoke) {
+    val roots = JSONArray()
+    val music = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
+    roots.put(music.absolutePath)
+    for (dir in activity.getExternalFilesDirs(null)) {
+      val root = dir?.absolutePath?.substringBefore("/Android/data") ?: continue
+      if (root != Environment.getExternalStorageDirectory().absolutePath) {
+        roots.put("$root/Music")
+        roots.put(root)
+      }
+    }
+    invoke.resolve(JSObject().put("value", roots.toString()))
   }
 
   private fun item(url: String) = MediaItem.Builder().setUri(Uri.parse(url)).setMediaId(url).build()
@@ -176,12 +496,15 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
   fun load(invoke: Invoke) {
     val args = invoke.parseArgs(LoadArgs::class.java)
     onMain(invoke) {
+      cancelFade()
+      PlaybackService.nativeQueue = false
       val p = player
       val items = mutableListOf(item(args.url))
       args.next?.let { items.add(item(it)) }
       p.setMediaItems(items, 0, (args.start * 1000).toLong())
       p.playWhenReady = !args.paused
       p.prepare()
+      schedule()
       emit("file", JSONObject.quote(args.url))
     }
   }
@@ -200,6 +523,8 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun stop(invoke: Invoke) {
     onMain(invoke) {
+      cancelFade()
+      PlaybackService.nativeQueue = false
       player.stop()
       player.clearMediaItems()
       emit("idle", "null")
@@ -219,11 +544,26 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
       val p = player
       when (args.name) {
         "pause" -> p.playWhenReady = args.value != "yes"
-        "volume" -> PlaybackService.setVolume(p, (args.value.toDoubleOrNull() ?: 100.0).toFloat() / 100f, null)
-        "mute" -> PlaybackService.setVolume(p, null, args.value == "yes")
+        "volume" -> {
+          PlaybackService.volume = ((args.value.toDoubleOrNull() ?: 100.0).toFloat() / 100f).coerceIn(0f, 1f)
+          applyVolume()
+        }
+        "mute" -> {
+          PlaybackService.muted = args.value == "yes"
+          applyVolume()
+        }
+        "volume-gain" -> {
+          gainDb = args.value.toDoubleOrNull() ?: 0.0
+          applyEffects()
+          applyVolume()
+        }
+        "eq" -> {
+          eqConfig = runCatching { JSONObject(args.value) }.getOrNull()
+          applyEffects()
+        }
         "speed" -> p.playbackParameters = PlaybackParameters(args.value.toFloatOrNull() ?: 1f)
         "loop-file" -> p.repeatMode = if (args.value == "inf") Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-        // mpv-only settings (EQ filter graph, ReplayGain, output device, gapless mode) have no
+        // mpv-only settings (filter graph, ReplayGain tags, output device, gapless mode) have no
         // equivalent here; ExoPlayer is always gapless.
         else -> {}
       }
