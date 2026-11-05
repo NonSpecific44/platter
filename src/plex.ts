@@ -8,7 +8,7 @@ import { isAndroid } from "./platform";
 export const PRODUCT = "Platter";
 /** Earlier versions called themselves Tonearm; they speak the same protocol. */
 export const isOurs = (product: string | undefined) => product === PRODUCT || product === "Tonearm";
-export const VERSION = "0.3.3";
+export const VERSION = "0.3.4";
 
 export function clientId(): string {
   let id = localStorage.getItem("tonearm.clientId");

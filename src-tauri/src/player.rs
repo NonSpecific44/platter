@@ -28,6 +28,26 @@ struct Shared {
     fade: AtomicU64,
     /// The volume the user chose; deck volumes differ from it during a fade.
     volume: Mutex<f64>,
+    filters: Mutex<Filters>,
+}
+
+/// Audio filters. Before mpv 0.38 there's no `volume-gain` (the AppImage bundles 0.37), so track
+/// gain joins the app's own filters on each deck instead.
+#[derive(Default)]
+struct Filters {
+    app: String,
+    gain: [f64; 2],
+}
+
+impl Filters {
+    fn chain(&self, deck: usize) -> String {
+        let gain = self.gain[deck];
+        match (self.app.is_empty(), gain == 0.0) {
+            (_, true) => self.app.clone(),
+            (true, false) => format!("lavfi=[volume={gain}dB]"),
+            (false, false) => format!("{},lavfi=[volume={gain}dB]", self.app),
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Default)]
@@ -76,7 +96,7 @@ impl Player {
             libc::setlocale(libc::LC_NUMERIC, c"C".as_ptr());
         }
         let decks = [Arc::new(new_deck()?), Arc::new(new_deck()?)];
-        let shared = Arc::new(Shared { active: AtomicUsize::new(0), fade: AtomicU64::new(0), volume: Mutex::new(100.0) });
+        let shared = Arc::new(Shared { active: AtomicUsize::new(0), fade: AtomicU64::new(0), volume: Mutex::new(100.0), filters: Mutex::default() });
         for (i, deck) in decks.iter().enumerate() {
             let client = deck.create_client(Some("platter-events")).map_err(err)?;
             let (app, shared, deck) = (app.clone(), shared.clone(), deck.clone());
@@ -109,7 +129,10 @@ impl Player {
         let mpv = self.active();
         mpv.set_property("pause", paused).map_err(err)?;
         let opts = format!("start={start:.3}");
-        mpv.command("loadfile", &[url, "replace", "-1", &opts]).map_err(err)?;
+        // mpv 0.38 added a playlist index before the options; the AppImage bundles 0.37.
+        mpv.command("loadfile", &[url, "replace", "-1", &opts])
+            .or_else(|_| mpv.command("loadfile", &[url, "replace", &opts]))
+            .map_err(err)?;
         if let Some(next) = next {
             mpv.command("loadfile", &[next, "append"]).map_err(err)?;
         }
@@ -188,7 +211,27 @@ impl Player {
                 self.active().set_property("volume", v).map_err(err)
             }
             // Per-track settings belong to whichever deck is playing that track.
-            "volume-gain" | "loop-file" => self.active().set_property(name, value.to_string()).map_err(err),
+            "loop-file" => self.active().set_property(name, value.to_string()).map_err(err),
+            "volume-gain" => {
+                if self.active().set_property(name, value.to_string()).is_ok() {
+                    return Ok(());
+                }
+                let deck = self.shared.active.load(Ordering::Relaxed);
+                let mut filters = self.shared.filters.lock().unwrap();
+                let gain: f64 = value.parse().map_err(|_| "bad gain".to_string())?;
+                if filters.gain[deck] == gain {
+                    return Ok(());
+                }
+                filters.gain[deck] = gain;
+                self.active().set_property("af", filters.chain(deck)).map_err(err)
+            }
+            "af" => {
+                let mut filters = self.shared.filters.lock().unwrap();
+                filters.app = value.to_string();
+                let active = self.shared.active.load(Ordering::Relaxed);
+                let _ = self.idle_deck().set_property("af", filters.chain(1 - active));
+                self.active().set_property("af", filters.chain(active)).map_err(err)
+            }
             _ => {
                 let result = self.active().set_property(name, value.to_string()).map_err(err);
                 let _ = self.idle_deck().set_property(name, value.to_string());
