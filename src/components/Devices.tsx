@@ -53,13 +53,14 @@ export function DevicesSheet() {
   const output = useOutput((s) => s.name);
   useTick(open ? 500 : 60_000);
   useEffect(() => {
-    if (open) void discover();
+    if (open) void discover(true);
   }, [open]);
   if (!open) return null;
 
   const list = Object.values(peers)
     .map((p) => ({ p, np: nowPlaying(p) }))
-    .filter(({ p, np }) => np || isOurs(p.device.product))
+    // A device that's stopped answering drops off, unless it's the one being controlled.
+    .filter(({ p, np }) => np || target?.clientId === p.device.clientId || (isOurs(p.device.product) && Date.now() - p.lastSeen < 60_000))
     .sort((a, b) => Number(!!b.np?.playing) - Number(!!a.np?.playing));
   const close = () => setOpen(false);
 
@@ -123,7 +124,7 @@ export function DevicesSheet() {
                       <Progress position={np.position} duration={np.duration} />
                     </>
                   ) : (
-                    <span className="dev-sub">{p.reachable || p.state ? "Ready" : "Connecting…"}</span>
+                    <span className="dev-sub">{target?.clientId === id ? "Selected · nothing playing" : p.reachable || p.state ? "Ready" : "Connecting…"}</span>
                   )}
                 </span>
               </button>
@@ -152,7 +153,7 @@ export function DevicesSheet() {
 
         {!list.length && (
           <p className="dim small dev-empty">
-            {scanning ? "Looking for devices…" : "No other devices found. Open Platter on another device signed in to the same Plex account."}
+            {scanning ? "Looking for devices…" : "No other devices found. Open Platter on another device signed in to the same Plex account and on the same network."}
           </p>
         )}
       </div>

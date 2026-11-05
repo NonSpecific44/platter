@@ -292,6 +292,15 @@ export function PhoneBar() {
   return (
     <div className="phone-bar-wrap">
       <ElsewhereBar />
+      {!track && target && (
+        <div className="phone-bar">
+          <div className="phone-bar-text phone-bar-idle">
+            <div className="phone-bar-title">Nothing playing</div>
+            <div className="phone-bar-sub remote">Connected to {target.name}</div>
+          </div>
+          <DevicesButton />
+        </div>
+      )}
       {track && (
         <div className="phone-bar" onClick={() => setNowPlaying(true)} {...swipe}>
           <div className="phone-bar-slides" ref={slides}>
@@ -495,6 +504,7 @@ function PageHead({ title }: { title: string }) {
   return (
     <header className="phone-head">
       <h1>{title}</h1>
+      <DevicesButton />
       <button className="icon-btn" onClick={() => go({ kind: "settings" })} title="Settings">
         <Settings size={22} />
       </button>

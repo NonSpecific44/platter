@@ -8,7 +8,7 @@ import { useDevicesSheet } from "./components/Devices";
 import { useMetadataEditor, usePrompt } from "./actions";
 import { ensureConnection } from "./connection";
 import { clientId } from "./plex";
-import { setOutputName } from "./remote";
+import { setOutputName, discover } from "./remote";
 
 function handleBack(): boolean {
   const pending = usePrompt.getState().resolve;
@@ -61,6 +61,8 @@ export function initAndroid() {
     void ensureConnection();
     // A network that has only just appeared often can't reach anything yet.
     setTimeout(() => void ensureConnection(), 5000);
+    // The address other devices should use has probably changed too.
+    setTimeout(() => void discover(true), 6000);
   });
   onNative<string>("output", setOutputName);
   const push = () => {

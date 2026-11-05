@@ -8,7 +8,7 @@ import { isAndroid } from "./platform";
 export const PRODUCT = "Platter";
 /** Earlier versions called themselves Tonearm; they speak the same protocol. */
 export const isOurs = (product: string | undefined) => product === PRODUCT || product === "Tonearm";
-export const VERSION = "0.3.2";
+export const VERSION = "0.3.3";
 
 export function clientId(): string {
   let id = localStorage.getItem("tonearm.clientId");
@@ -44,8 +44,11 @@ export function plexHeaders(token?: string): Record<string, string> {
 
 // ---- plex.tv ---------------------------------------------------------------
 
+// Test builds talk to the stand-in server instead (see tests/mock-plex.mjs).
+const PLEX_TV = (import.meta.env.VITE_TEST_PLEX as string | undefined) ?? "https://plex.tv";
+
 async function plexTv<T>(path: string, opts: { method?: string; token?: string } = {}): Promise<T> {
-  const r = await fetch("https://plex.tv" + path, {
+  const r = await fetch(PLEX_TV + path, {
     method: opts.method ?? "GET",
     headers: plexHeaders(opts.token),
   });
@@ -90,6 +93,8 @@ export interface Resource {
   clientIdentifier: string;
   accessToken: string;
   provides: string;
+  product: string;
+  platform: string;
   owned: boolean;
   presence: boolean;
   connections: Connection[];
@@ -98,6 +103,19 @@ export interface Resource {
 export async function getServers(token: string): Promise<Resource[]> {
   const rs = await plexTv<Resource[]>("/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1", { token });
   return rs.filter((r) => r.provides.split(",").includes("server"));
+}
+
+/** Other Platters on this account that have published an address. */
+export async function getPlayers(token: string): Promise<Resource[]> {
+  const rs = await plexTv<Resource[]>("/api/v2/resources", { token });
+  return rs.filter((r) => isOurs(r.product) && r.clientIdentifier !== clientId() && r.connections?.length);
+}
+
+/** Lists this device's address on the Plex account, as Plex's own players do. */
+export async function publishConnection(token: string, uri: string) {
+  const q = new URLSearchParams({ "Connection[][uri]": uri });
+  const r = await fetch(`${PLEX_TV}/devices/${clientId()}?${q}`, { method: "PUT", headers: { ...plexHeaders(token), "X-Plex-Provides": "player" } });
+  if (!r.ok) throw new Error(`plex.tv returned ${r.status}`);
 }
 
 // ---- library model ---------------------------------------------------------

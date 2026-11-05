@@ -4,12 +4,13 @@
 //! `/tonearm/*` endpoints (named from before the app was renamed; kept for compatibility). The server only moves bytes: every request is handed to the frontend
 //! (`remote://request`), which answers through `remote_reply`, so the protocol logic is shared
 //! between desktop and Android. Discovery uses Plex's GDM: a multicast "M-SEARCH" on
-//! 239.0.0.250:32412 that players answer with their name and port.
+//! 239.0.0.250:32412 that players answer with their name and port. Multicast stops at the subnet
+//! and many routers drop it, so devices also find each other through the Plex account (remote.ts).
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
-use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
@@ -251,6 +252,18 @@ pub fn remote_hostname() -> String {
         .ok()
         .filter(|h| !h.is_empty() && h != "localhost")
         .unwrap_or_default()
+}
+
+/// This device's address on its local network, if it's on one. Connecting a UDP socket only picks
+/// a route: nothing is sent.
+#[tauri::command]
+pub fn remote_lan_address() -> Option<String> {
+    let s = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    s.connect((Ipv4Addr::new(8, 8, 8, 8), 53)).ok()?;
+    match s.local_addr().ok()?.ip() {
+        IpAddr::V4(ip) if ip.is_private() => Some(ip.to_string()),
+        _ => None,
+    }
 }
 
 /// Asks the LAN for Plex players; returns whoever answers within `ms`.

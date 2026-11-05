@@ -13,13 +13,17 @@
 // with the whole queue and position, which drives the "Listening on …" bar and "Play here".
 // Without any LAN link, the Plex server's session list still gives the track and position.
 //
+// Finding devices: each one publishes its LAN address to the Plex account and reads the others'
+// back, so idle devices are found across subnets and where multicast is dropped. GDM still finds
+// devices on the same subnet, and also Plex's own apps.
+//
 // Controlling: picking another device routes every `player` action to it and mirrors its state
 // into usePlayer, so the whole UI (player bar, queue, lyrics) follows the remote device.
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { fetch } from "@tauri-apps/plugin-http";
-import { PRODUCT, Track, VERSION, clientId, getUser, isOurs, plexHeaders, setPlexDeviceName, toTrack } from "./plex";
+import { PRODUCT, Track, VERSION, clientId, getPlayers, getUser, isOurs, plexHeaders, publishConnection, setPlexDeviceName, toTrack } from "./plex";
 import { currentTrack, player, playerFlags, usePlayer } from "./player";
 import { fmtTime, server, toast, useSession, useSettings } from "./store";
 import { isAndroid } from "./platform";
@@ -254,8 +258,9 @@ async function route(r: IncomingRequest): Promise<{ status: number; contentType:
       const msg = JSON.parse(r.body || "{}") as SyncMessage;
       if (!msg.device?.clientId) return { status: 400, contentType: "text/plain", body: "bad sync" };
       receivePeer({ ...msg.device, host: r.from }, msg.state, true);
+      noteControlled(msg);
       for (const c of msg.commands ?? []) await runCommand(c);
-      const reply: SyncMessage = { device: myDevice(), state: stateFor(msg.have), commands: takeOutbox(msg.device.clientId), have: queueVersionOf(msg.device.clientId) };
+      const reply: SyncMessage = { device: myDevice(), state: stateFor(msg.have), commands: takeOutbox(msg.device.clientId), have: queueVersionOf(msg.device.clientId), controlling: isControlling(msg.device.clientId) };
       return { status: 200, contentType: "application/json", body: JSON.stringify(reply) };
     }
     if (p === "/tonearm/call") {
@@ -403,6 +408,17 @@ interface SyncMessage {
   commands: Command[];
   /** The version of our queue the sender last received. */
   have?: number;
+  /** The sender is controlling the receiver, which should collect commands promptly. */
+  controlling?: boolean;
+}
+
+const isControlling = (id: string) => useRemote.getState().target?.clientId === id;
+
+/** Until when another device is controlling this one. */
+let controlledUntil = 0;
+
+function noteControlled(msg: SyncMessage) {
+  if (msg.controlling) controlledUntil = Date.now() + 30_000;
 }
 
 /** Commands waiting for a device that we can't reach; it collects them when it syncs with us. */
@@ -498,12 +514,13 @@ async function syncWith(p: Peer) {
   if (!p.reachable && Date.now() - (lastTry.get(id) ?? 0) < 20_000) return;
   lastTry.set(id, Date.now());
   const commands = takeOutbox(id);
-  const msg: SyncMessage = { device: myDevice(), state: stateFor(sentAck.get(id)), commands, have: queueVersionOf(id) };
+  const msg: SyncMessage = { device: myDevice(), state: stateFor(sentAck.get(id)), commands, have: queueVersionOf(id), controlling: isControlling(id) };
   try {
     const r = await remoteFetch(p.device, "/tonearm/sync", { method: "POST", body: JSON.stringify(msg) }, 4000);
     const reply = (await r.json()) as SyncMessage;
     patchPeer(id, (cur) => (cur ? { ...cur, reachable: true } : cur));
     sentAck.set(id, reply.have);
+    noteControlled(reply);
     receivePeer({ ...reply.device, host: p.device.host }, reply.state, false);
     for (const c of reply.commands ?? []) await runCommand(c);
   } catch {
@@ -539,10 +556,81 @@ function syncSoon() {
   soon = window.setTimeout(() => void syncAll(), 250);
 }
 
-/** Platter devices on the network, plus anything the Plex server says is playing. */
-export async function discover() {
+let publishedAs = "";
+
+/** Keeps this device's address on the Plex account current. */
+async function publishAddress() {
+  const token = useSession.getState().token;
+  const ip = await invoke<string | null>("remote_lan_address").catch(() => null);
+  if (!token || !ip) return;
+  const uri = `http://${ip}:${myPort}`;
+  const key = `${uri} ${deviceName()}`;
+  if (key === publishedAs) return;
+  await publishConnection(token, uri)
+    .then(() => (publishedAs = key))
+    .catch((e) => console.warn("publishing address", e));
+}
+
+/** Whether `d` answers as itself. An old address may belong to something else by now. */
+async function answersAs(d: Device) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 1500);
+  try {
+    // No token: nothing has proved who's at this address yet.
+    const r = await fetch(`${base(d)}/resources`, { signal: ctl.signal, headers: plexHeaders() });
+    return r.ok && (await r.text()).includes(`machineIdentifier="${esc(d.clientId)}"`);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+let accountChecked = 0;
+
+/** Platters listed on the Plex account. Only those answering right now become peers. */
+async function findOnAccount(force: boolean) {
+  const token = useSession.getState().token;
+  if (!token || (!force && Date.now() - accountChecked < 5 * 60_000)) return;
+  accountChecked = Date.now();
+  const players = await getPlayers(token).catch(() => []);
+  await Promise.all(
+    players.map(async (r) => {
+      const id = r.clientIdentifier;
+      if (useRemote.getState().peers[id]?.reachable) return;
+      for (const c of r.connections) {
+        let url: URL;
+        try {
+          url = new URL(c.uri);
+        } catch {
+          continue;
+        }
+        const d: Device = {
+          name: r.name.replace(/^(Platter|Tonearm)( - | on )/, ""),
+          host: url.hostname,
+          port: Number(url.port) || 32500,
+          clientId: id,
+          product: r.product,
+          deviceClass: r.platform === "Android" ? "phone" : "pc",
+        };
+        if (!(await answersAs(d))) continue;
+        patchPeer(id, (p) => ({ ...(p ?? emptyPeer(d)), device: { ...(p?.device ?? d), ...d }, lastSeen: Date.now() }));
+        lastTry.delete(id);
+        return;
+      }
+    }),
+  );
+}
+
+/**
+ * Platter devices on the network, plus anything the Plex server says is playing. `force` also asks
+ * the Plex account straight away, for when someone is looking at the list.
+ */
+export async function discover(force = false) {
   useRemote.setState({ scanning: true });
   try {
+    await publishAddress();
+    await findOnAccount(force);
     const me = clientId();
     const gdm = await invoke<Device[]>("remote_discover", { ms: 1200 }).catch(() => [] as Device[]);
     for (const d of gdm) {
@@ -707,7 +795,9 @@ export async function control(id: string) {
   if (s.loaded) await local.stop();
   useRemote.setState({ target: p.device });
   playerFlags.remote = true;
+  // Until it reports in, show it as idle rather than this device's own queue.
   if (p.state) mirror(p.state);
+  else usePlayer.setState({ queue: [], original: null, index: 0, position: 0, duration: 0, loaded: false, paused: true, buffering: false });
   syncSoon();
 }
 
@@ -823,12 +913,16 @@ export async function initRemote() {
     const anyPlaying =
       playingHere() || Object.values(useRemote.getState().peers).some((p) => nowPlaying(p)?.playing) || !!useRemote.getState().target;
     void syncAll();
-    // In the background nobody's watching progress bars; save the battery.
-    setTimeout(tick, document.hidden ? 20_000 : anyPlaying ? 2000 : 8000);
+    // A device behind a firewall only gets commands by asking, so it has to ask often enough to
+    // feel responsive, even in the tray. On a phone in the background, save the battery.
+    const delay = Date.now() < controlledUntil ? 1000 : document.hidden ? (isAndroid() ? 20_000 : 5000) : anyPlaying ? 2000 : 3000;
+    setTimeout(tick, delay);
   };
   setTimeout(tick, 1500);
-  setTimeout(() => void discover(), 1000);
+  setTimeout(() => void discover(true), 1000);
   setInterval(() => !document.hidden && void discover(), 60_000);
+  document.addEventListener("visibilitychange", () => !document.hidden && void discover());
+  window.addEventListener("online", () => void discover(true));
   let sessionTick = 0;
   setInterval(() => {
     // Every 5 s on screen or while playing; once a minute otherwise.

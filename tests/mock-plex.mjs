@@ -18,6 +18,10 @@ const track = (i) => ({
 });
 const mc = (o) => ({ MediaContainer: o });
 
+// Stands in for plex.tv: devices that have published an address.
+const published = new Map();
+if (process.env.MOCK_PLAYERS) for (const d of JSON.parse(process.env.MOCK_PLAYERS)) published.set(d.clientIdentifier, d);
+
 // 40 s of a soft stereo tone.
 function tone(freq) {
   const rate = 22050;
@@ -34,6 +38,14 @@ const lidarrArtist = { foreignArtistId: "mb-a1", artistName: "Requested Artist",
 const lidarrAlbum = { foreignAlbumId: "mb-r1", title: "Requested Album", releaseDate: "2020-01-01", albumType: "Album", artist: lidarrArtist, images: [] };
 
 function route(p, q, req, body) {
+  const dev = p.match(/^\/devices\/([^/]+)$/);
+  if (dev && req.method === "PUT") {
+    const uri = q.get("Connection[][uri]");
+    console.log(`PUBLISH ${dev[1]} ${uri} name=${req.headers["x-plex-device-name"]} product=${req.headers["x-plex-product"]} provides=${req.headers["x-plex-provides"]}`);
+    published.set(dev[1], { clientIdentifier: dev[1], name: req.headers["x-plex-device-name"], product: req.headers["x-plex-product"], platform: req.headers["x-plex-platform"], provides: "player", connections: [{ uri }] });
+    return {};
+  }
+  if (p === "/api/v2/resources") return [...published.values()];
   if (p === "/identity") return mc({ machineIdentifier: "mock", version: "1" });
   if (p.startsWith("/hubs/sections")) return mc({ Hub: [
     { hubIdentifier: "recent", title: "Recently added", type: "album", key: "/hubs/home/recentlyAdded?type=9", more: true, Metadata: [...Array(12)].map((_, i) => album(i)) },

@@ -303,7 +303,10 @@ export function PlayerBar() {
             <Heart_ t={track} />
           </>
         ) : (
-          <div className="dim small">Nothing playing</div>
+          <div className="pb-meta">
+            <div className="dim small">Nothing playing</div>
+            <RemoteBadge />
+          </div>
         )}
       </div>
       <div className="pb-center">

@@ -38,7 +38,9 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 - **Play here** carries on with the same queue, track and position on this device and pauses the other one.
 - The devices button lists your devices. Pick one to send your music there and control it from here; the player bar, queue and lyrics follow that device.
 - One device plays at a time: starting music on one pauses Platter everywhere else (Settings → Playback).
-- Devices exchange their state every couple of seconds over the LAN. One working direction is enough, so a firewall on one side doesn't break it. Without any LAN link, Platter falls back to your Plex server's list of active sessions, which also shows other Plex apps.
+- Idle devices are listed too: pick one before anything's playing, then choose music from any device and it plays there.
+- Each Platter publishes its local network address to your Plex account, so devices find each other across subnets and on networks that drop multicast. Other Plex players do the same.
+- Devices exchange their state every couple of seconds over the LAN. One working direction is enough, so a firewall on one side doesn't break it, though commands to a firewalled device can take a few seconds. Without any LAN link, Platter falls back to your Plex server's list of active sessions, which also shows other Plex apps.
 - Speaks the Plex Companion protocol (HTTP on port 32500) with GDM discovery, so Plex apps can also see and control Platter.
 
 **Android**

@@ -230,6 +230,8 @@ input[type="color"] { width: 44px; height: 30px; border: none; background: none;
 .phone-section .section-head, .phone-section-head { margin: 16px 0 4px; min-height: 0; }
 .phone-section .section-head h2, .phone-section-head h2 { margin: 0; }
 .shelf-filter { margin-bottom: 12px; }
+.phone-bar-idle { flex: 1; min-width: 0; padding-left: 12px; }
+.phone-head .icon-btn:first-of-type { margin-left: auto; }
 .shelf-filter:empty { display: none; }
 .shelf-filter .filter, .shelf-filter .filter input { width: 100%; }
 

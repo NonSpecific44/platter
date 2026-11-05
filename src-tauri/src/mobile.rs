@@ -187,6 +187,7 @@ pub fn run() {
             crate::remote::remote_identity,
             crate::remote::remote_discover,
             crate::remote::remote_hostname,
+            crate::remote::remote_lan_address,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Platter");
