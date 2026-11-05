@@ -207,7 +207,18 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Launching from a menu hides stderr, so failures also go to a file people can find.
+fn log_startup_failure(message: &str) {
+    if let Some(home) = std::env::var_os("HOME") {
+        let dir = std::path::PathBuf::from(home).join(".cache/platter");
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("startup-error.log"), format!("{message}\n"));
+    }
+    eprintln!("{message}");
+}
+
 pub fn run() {
+    std::panic::set_hook(Box::new(|info| log_startup_failure(&info.to_string())));
     render::configure_env();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -225,7 +236,11 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 render::apply(&window);
             }
-            let player = Player::new(handle.clone()).map_err(|e| format!("mpv: {e}"))?;
+            let player = Player::new(handle.clone()).map_err(|e| {
+                let message = format!("Couldn't start the audio engine (mpv): {e}");
+                log_startup_failure(&message);
+                message
+            })?;
             app.manage(player);
             app.manage(Media::new(&handle));
             if let Err(e) = build_tray(&handle) {

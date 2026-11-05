@@ -121,6 +121,8 @@ export interface Settings {
   lidarrQuality: number;
   lidarrMetadata: number;
   seekStyle: "waveform" | "wavy" | "bar";
+  /** How artwork moves when changing track on a phone. */
+  trackAnimation: "slide" | "stack" | "fade" | "none";
   design: "material" | "classic";
   colorScheme: string;
   /** Read access to the release repository while it is private. */
@@ -128,9 +130,9 @@ export interface Settings {
 }
 
 const defaultSettings: Settings = {
-  theme: "system",
+  theme: "dark",
   accentFromArt: true,
-  accent: "#f5873a",
+  accent: "#ff8a00",
   uiScale: 1,
   showWaveform: true,
   gapless: true,
@@ -152,7 +154,7 @@ const defaultSettings: Settings = {
   reportToPlex: true,
   smartShuffle: true,
   sidebarCollapsed: false,
-  settingsVersion: 3,
+  settingsVersion: 4,
   deviceName: "",
   autoplay: true,
   exclusivePlayback: true,
@@ -170,6 +172,7 @@ const defaultSettings: Settings = {
   lidarrQuality: 0,
   lidarrMetadata: 0,
   seekStyle: "waveform",
+  trackAnimation: "slide",
   design: /Android/i.test(navigator.userAgent) ? "material" : "classic",
   colorScheme: "platter",
   githubToken: "",
@@ -180,7 +183,12 @@ function migrate(s: Settings): Settings {
   if (s.settingsVersion < 2) s = { ...s, closeToTray: true };
   // v3: the waveform switch became a choice of seek bars.
   if (s.settingsVersion < 3 && !s.showWaveform) s = { ...s, seekStyle: "bar" };
-  return { ...s, settingsVersion: 3 };
+  // v4: the new look is dark with the logo's orange.
+  if (s.settingsVersion < 4) {
+    if (s.theme === "system") s = { ...s, theme: "dark" };
+    if (s.accent === "#f5873a") s = { ...s, accent: "#ff8a00" };
+  }
+  return { ...s, settingsVersion: 4 };
 }
 
 /** Excluded from anything Platter queues by itself (autoplay, radio, library shuffle). */

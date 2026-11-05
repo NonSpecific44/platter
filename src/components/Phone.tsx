@@ -1,13 +1,13 @@
 // Phone layout: bottom tabs, a compact mini player and full-screen Now Playing, in the spirit of
 // the big streaming apps. Used on Android and in very narrow windows.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown, Heart, Home, Inbox, Library, ListMusic, Mic2, Pause, Play, Search, Settings, X,
 } from "lucide-react";
 import { Album, Artist, Hub, Playlist, Track } from "../plex";
 import { player, usePlayer } from "../player";
-import { openMenu, sectionKey, server, useNav, View } from "../store";
-import { albumMenu, playAlbum, trackMenu, useData, usePaged, usePlaylists } from "../actions";
+import { openMenu, sectionKey, server, useNav, useSettings, View } from "../store";
+import { ALBUM_SORTS, albumMenu, playAlbum, trackMenu, useData, usePaged, usePlaylists } from "../actions";
 import { useRemote } from "../remote";
 import { lidarrConfigured } from "../lidarr";
 import { Cover, Heart_, Loading } from "./common";
@@ -103,6 +103,109 @@ export function useEdgeSwipeBack() {
   });
 }
 
+// ---- track carousel --------------------------------------------------------------------------
+
+type TrackAnimation = "slide" | "stack" | "fade" | "none";
+
+/** The tracks either side of the current one, in queue order. */
+function useNeighbours() {
+  const queue = usePlayer((s) => s.queue);
+  const index = usePlayer((s) => s.index);
+  const repeat = usePlayer((s) => s.repeat);
+  const at = (i: number) => queue[repeat === "all" ? (i + queue.length) % queue.length : i];
+  return { prev: at(index - 1), cur: queue[index], next: at(index + 1) };
+}
+
+/**
+ * Positions the previous, current and next slides for a swipe `p` from -1 (fully on the next
+ * track) to 1 (fully on the previous one). Works on the DOM directly so dragging never re-renders.
+ */
+function placeSlides(box: HTMLElement | null, p: number, mode: TrackAnimation, animate: boolean) {
+  if (!box) return;
+  const w = box.clientWidth + 28;
+  box.querySelectorAll<HTMLElement>("[data-slide]").forEach((el) => {
+    const o = Number(el.dataset.slide);
+    const d = o + p; // 0 means centred
+    let transform = "";
+    let opacity = 1;
+    let z = 1;
+    if (mode === "slide") {
+      transform = `translateX(${d * w}px)`;
+    } else if (mode === "stack") {
+      // The current cover slides away, uncovering the next one beneath it.
+      if (d < 0) transform = `translateX(${d * w * 1.1}px) rotate(${d * 8}deg)`;
+      else transform = `scale(${1 - Math.min(1, d) * 0.12})`;
+      opacity = d > 0 ? 1 - Math.min(1, d) * 0.5 : 1;
+      z = 3 - o;
+    } else {
+      opacity = Math.max(0, 1 - Math.abs(d));
+    }
+    el.classList.toggle("animating", animate);
+    el.style.transform = transform;
+    el.style.opacity = String(opacity);
+    el.style.zIndex = String(z);
+  });
+}
+
+/** Drag handling and the follow-through animation shared by Now Playing and the mini player. */
+function useTrackCarousel(box: React.RefObject<HTMLElement | null>, has: { prev: boolean; next: boolean }) {
+  const mode = useSettings((s) => s.trackAnimation);
+  const uid = usePlayer((s) => s.queue[s.index]?.uid);
+  const index = usePlayer((s) => s.index);
+  const lastIndex = useRef(index);
+  const swiping = useRef(false);
+  /** A finger or a follow-through animation owns the slides right now. */
+  const busy = useRef(false);
+
+  // Slides appear when a screen opens and when the queue changes, so place them on every render.
+  useLayoutEffect(() => {
+    if (!busy.current) placeSlides(box.current, 0, mode, false);
+  });
+
+  // Track changes that didn't come from a swipe animate too.
+  useLayoutEffect(() => {
+    const from = lastIndex.current;
+    lastIndex.current = index;
+    if (swiping.current || from === index || mode === "none") {
+      swiping.current = false;
+      return;
+    }
+    busy.current = true;
+    placeSlides(box.current, index > from ? 1 : -1, mode, false);
+    void box.current?.offsetWidth;
+    placeSlides(box.current, 0, mode, true);
+    const t = setTimeout(() => (busy.current = false), 260);
+    return () => clearTimeout(t);
+  }, [uid, mode, index]);
+
+  return {
+    drag(d: number) {
+      busy.current = true;
+      const w = box.current?.clientWidth || 300;
+      let p = Math.max(-1, Math.min(1, d / w));
+      if ((p < 0 && !has.next) || (p > 0 && !has.prev)) p *= 0.2;
+      if (mode !== "none") placeSlides(box.current, p, mode, false);
+    },
+    release(d: number, speed: number) {
+      const far = Math.abs(d) > 80 || (Math.abs(d) > 35 && speed > 0.6);
+      const go = far && (d < 0 ? has.next : has.prev);
+      if (!go) {
+        placeSlides(box.current, 0, mode, true);
+        setTimeout(() => (busy.current = false), 260);
+        return;
+      }
+      const skip = () => {
+        swiping.current = true;
+        busy.current = false;
+        void (d < 0 ? player.next() : player.previous());
+      };
+      if (mode === "none") return skip();
+      placeSlides(box.current, d < 0 ? -1 : 1, mode, true);
+      setTimeout(skip, 230);
+    },
+  };
+}
+
 // ---- tabs -------------------------------------------------------------------------------
 
 const TABS: [View["kind"], string, typeof Home, View][] = [
@@ -164,31 +267,37 @@ export function PhoneBar() {
     const d = usePlayer.getState().duration;
     if (fill.current) fill.current.style.transform = `scaleX(${d ? Math.min(1, sec / d) : 0})`;
   });
-  const bar = useRef<HTMLDivElement>(null);
+  const { prev, cur, next } = useNeighbours();
+  const slides = useRef<HTMLDivElement>(null);
+  const carousel = useTrackCarousel(slides, { prev: !!prev, next: !!next });
   // Sideways to skip, up to open.
   const swipe = useSwipe({
     onMove(axis, d) {
-      if (bar.current && axis === "x") bar.current.style.transform = `translateX(${d}px)`;
+      if (axis === "x") carousel.drag(d);
     },
     onEnd(axis, d, speed) {
-      if (axis === "y") {
-        if (d < -30 || (d < -10 && speed > 0.4)) setNowPlaying(true);
-        return;
-      }
-      const far = Math.abs(d) > 90 || (Math.abs(d) > 40 && speed > 0.6);
-      settle(bar.current, "");
-      if (far) void (d < 0 ? player.next() : player.previous());
+      if (axis === "x") carousel.release(d, speed);
+      else if (d < -30 || (d < -10 && speed > 0.4)) setNowPlaying(true);
     },
   });
+  const slide = (q: NonNullable<typeof cur>, offset: number) => (
+    <div className="phone-bar-slide" key={q.uid} data-slide={offset}>
+      <Cover thumb={q.track.thumb} className="phone-bar-art" />
+      <div className="phone-bar-text">
+        <div className="phone-bar-title">{q.track.title}</div>
+        <div className={`phone-bar-sub ${target && offset === 0 ? "remote" : ""}`}>{target && offset === 0 ? `Playing on ${target.name}` : q.track.artist}</div>
+      </div>
+    </div>
+  );
   return (
     <div className="phone-bar-wrap">
       <ElsewhereBar />
       {track && (
-        <div className="phone-bar" ref={bar} onClick={() => setNowPlaying(true)} {...swipe}>
-          <Cover thumb={track.thumb} className="phone-bar-art" />
-          <div className="phone-bar-text">
-            <div className="phone-bar-title">{track.title}</div>
-            <div className={`phone-bar-sub ${target ? "remote" : ""}`}>{target ? `Playing on ${target.name}` : track.artist}</div>
+        <div className="phone-bar" onClick={() => setNowPlaying(true)} {...swipe}>
+          <div className="phone-bar-slides" ref={slides}>
+            {prev && prev !== cur && slide(prev, -1)}
+            {cur && slide(cur, 0)}
+            {next && next !== cur && slide(next, 1)}
           </div>
           <span onClick={(e) => e.stopPropagation()}>
             <DevicesButton />
@@ -222,6 +331,8 @@ export function PhoneNowPlaying() {
   const [pane, setPane] = useState<"art" | "lyrics" | "queue">("art");
   const sheet = useRef<HTMLDivElement>(null);
   const art = useRef<HTMLDivElement>(null);
+  const { prev, cur, next } = useNeighbours();
+  const carousel = useTrackCarousel(art, { prev: !!prev, next: !!next });
   useEffect(() => {
     if (!nowPlaying) setPane("art");
   }, [nowPlaying]);
@@ -229,10 +340,7 @@ export function PhoneNowPlaying() {
   const swipe = useSwipe({
     onMove(axis, d) {
       if (axis === "y" && d > 0 && sheet.current) sheet.current.style.transform = `translateY(${d}px)`;
-      if (axis === "x" && art.current) {
-        art.current.style.transform = `translateX(${d}px) rotate(${d / 60}deg)`;
-        art.current.style.opacity = String(Math.max(0.4, 1 - Math.abs(d) / 500));
-      }
+      if (axis === "x") carousel.drag(d);
     },
     onEnd(axis, d, speed) {
       if (axis === "y") {
@@ -246,11 +354,7 @@ export function PhoneNowPlaying() {
         }
         return;
       }
-      const el = art.current;
-      const far = Math.abs(d) > 90 || (Math.abs(d) > 40 && speed > 0.6);
-      if (el) el.style.opacity = "";
-      settle(el, "");
-      if (far) void (d < 0 ? player.next() : player.previous());
+      carousel.release(d, speed);
     },
   });
   if (!nowPlaying) return null;
@@ -269,7 +373,7 @@ export function PhoneNowPlaying() {
         </button>
         <div className="pnp-context">
           <span>{target ? `Playing on ${target.name}` : "Now playing"}</span>
-          <strong>{track?.album}</strong>
+          {track?.album && <strong>{track.album}</strong>}
         </div>
         <button className="icon-btn" title="More" onClick={(e) => track && openMenu(e, trackMenu([track], {}))}>
           ⋯
@@ -277,8 +381,22 @@ export function PhoneNowPlaying() {
       </header>
       <div className={`pnp-body ${pane === "art" ? "swipeable" : ""}`} {...(pane === "art" ? swipe : {})}>
         {pane === "art" ? (
-          <div className="pnp-art-wrap" ref={art}>
-            <Cover thumb={track?.thumb} className="pnp-art" icon="album" />
+          <div className="pnp-slides" ref={art}>
+            {prev && prev !== cur && (
+              <div className="pnp-slide" key={prev.uid} data-slide={-1}>
+                <Cover thumb={prev.track.thumb} className="pnp-art" icon="album" />
+              </div>
+            )}
+            {cur && (
+              <div className="pnp-slide" key={cur.uid} data-slide={0}>
+                <Cover thumb={cur.track.thumb} className="pnp-art" icon="album" />
+              </div>
+            )}
+            {next && next !== cur && (
+              <div className="pnp-slide" key={next.uid} data-slide={1}>
+                <Cover thumb={next.track.thumb} className="pnp-art" icon="album" />
+              </div>
+            )}
           </div>
         ) : (
           <div className="pnp-pane">{pane === "lyrics" ? <LyricsView big /> : <QueueList limit={100} />}</div>
@@ -294,6 +412,11 @@ export function PhoneNowPlaying() {
               <div className="pnp-artist" onClick={() => track.artistKey && goTo({ kind: "artist", id: track.artistKey })}>
                 {track.artist}
               </div>
+              {track.album && (
+                <div className="pnp-album" onClick={() => track.albumKey && goTo({ kind: "album", id: track.albumKey })}>
+                  {track.album}
+                </div>
+              )}
             </div>
             <Heart_ t={track} />
           </div>
@@ -466,11 +589,27 @@ function ArtistRows({ go }: { go: (v: View) => void }) {
 
 function AlbumRows({ go }: { go: (v: View) => void }) {
   const sec = sectionKey();
-  const sort = "addedAt:desc";
+  const [sort, setSort] = useState(() => localStorage.getItem("tonearm.albumSort") ?? "titleSort");
   const { items, done } = usePaged(`albums:${sec}:${sort}::false`, (s, n) => server().albums(sec, { sort, unplayed: false }, s, n));
   const { limit, sentinel } = useProgressive(items.length);
   return (
     <div className="lrows">
+      <label className="sort-row">
+        Sort by
+        <select
+          value={sort}
+          onChange={(e) => {
+            setSort(e.target.value);
+            localStorage.setItem("tonearm.albumSort", e.target.value);
+          }}
+        >
+          {ALBUM_SORTS.map(([k, l]) => (
+            <option key={k} value={k}>
+              {l}
+            </option>
+          ))}
+        </select>
+      </label>
       {!items.length && !done && <Loading />}
       {items.slice(0, limit).map((a: Album) => (
         <Row

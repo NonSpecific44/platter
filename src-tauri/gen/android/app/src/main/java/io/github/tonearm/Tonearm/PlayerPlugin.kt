@@ -34,6 +34,8 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import androidx.activity.result.ActivityResult
+import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
@@ -142,6 +144,11 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   override fun onResume() {
+    // Back from the permission prompt: carry on to the folder browser.
+    pendingPick?.let {
+      pendingPick = null
+      openFolderBrowser(it)
+    }
     foreground = true
     multicastLock?.let { if (!it.isHeld) it.acquire() }
     schedule()
@@ -456,27 +463,51 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     invoke.resolve(o)
   }
 
+  /**
+   * The system's folder browser. The scanner reads ordinary paths through the audio permission, so
+   * the chosen tree is converted back to one. The permission prompt comes first, then the browser.
+   */
   @Command
-  fun requestAccess(invoke: Invoke) {
+  fun pickFolder(invoke: Invoke) {
     val perm = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
-    if (activity.checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) activity.requestPermissions(arrayOf(perm), 2)
-    invoke.resolve()
+    if (activity.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED) {
+      openFolderBrowser(invoke)
+    } else {
+      pendingPick = invoke
+      activity.requestPermissions(arrayOf(perm), 2)
+    }
   }
 
-  /** Likely music folders, including removable cards. */
-  @Command
-  fun storageRoots(invoke: Invoke) {
-    val roots = JSONArray()
-    val music = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
-    roots.put(music.absolutePath)
-    for (dir in activity.getExternalFilesDirs(null)) {
-      val root = dir?.absolutePath?.substringBefore("/Android/data") ?: continue
-      if (root != Environment.getExternalStorageDirectory().absolutePath) {
-        roots.put("$root/Music")
-        roots.put(root)
-      }
+  private var pendingPick: Invoke? = null
+
+  private fun openFolderBrowser(invoke: Invoke) {
+    startActivityForResult(invoke, Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), "folderPicked")
+  }
+
+  @ActivityCallback
+  fun folderPicked(invoke: Invoke, result: ActivityResult) {
+    val tree = result.data?.data
+    if (result.resultCode != Activity.RESULT_OK || tree == null) {
+      invoke.resolve(JSObject().put("value", ""))
+      return
     }
-    invoke.resolve(JSObject().put("value", roots.toString()))
+    val path = treeToPath(tree)
+    if (path == null) invoke.reject("That location can't be used. Choose a folder on this device or its SD card.")
+    else invoke.resolve(JSObject().put("value", path))
+  }
+
+  private fun treeToPath(tree: Uri): String? {
+    val id = android.provider.DocumentsContract.getTreeDocumentId(tree)
+    if (id.startsWith("raw:")) return id.removePrefix("raw:")
+    val volume = id.substringBefore(':')
+    val rel = id.substringAfter(':', "")
+    val root = when {
+      volume == "primary" -> Environment.getExternalStorageDirectory().absolutePath
+      volume == "home" -> Environment.getExternalStorageDirectory().absolutePath + "/Documents"
+      Regex("[0-9A-Fa-f-]+").matches(volume) -> "/storage/$volume"
+      else -> return null
+    }
+    return if (rel.isEmpty()) root else "$root/$rel"
   }
 
   private fun item(url: String) = MediaItem.Builder().setUri(Uri.parse(url)).setMediaId(url).build()

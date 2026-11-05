@@ -72,7 +72,7 @@ Download from the [latest release](../../releases/latest):
 | Any Linux | `Platter_*_amd64.AppImage`, then `chmod +x` and run it |
 | Android 7+ | `Platter-*-android.apk`, allow installs from your browser or file manager |
 
-The Arch package and AppImage need `mpv` (libmpv) and `webkit2gtk-4.1` installed.
+The Arch package needs `mpv` and `webkit2gtk-4.1` installed. The AppImage bundles what it needs, but running it requires FUSE (`fuse2` on Arch). If Platter won't start, check `~/.cache/platter/startup-error.log`, or run it from a terminal.
 
 ### Firewall (for remote control)
 
@@ -118,7 +118,17 @@ npm ci
 npx tauri dev                       # run in development
 npx tauri build --no-bundle         # release binary in src-tauri/target/release/platter
 cd packaging && makepkg -si         # Arch package
-npx tauri build --bundles appimage  # AppImage
+```
+
+**AppImages must not be built directly on a distribution compiled for one CPU** (CachyOS's znver4 or v3/v4 repositories, for example). The AppImage bundles the build machine's libraries, and they'd crash on CPUs without those instructions. Build it in an Ubuntu 24.04 root instead, which needs no root access:
+
+```bash
+mkdir -p .build-tools/rootfs && cd .build-tools
+curl -LO https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.3-base-amd64.tar.gz
+unshare -U --map-auto --map-root-user tar xzf ubuntu-base-24.04.3-base-amd64.tar.gz -C rootfs --exclude='dev/*'
+cd .. && packaging/inroot.sh "$PWD" 'apt-get update && apt-get install -y build-essential curl file patchelf pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libmpv-dev libdbus-1-dev libssl-dev libxdo-dev'
+# Then install Rust and Node 22 inside it, and:
+packaging/inroot.sh "$PWD" 'bash /project/packaging/build-appimage.sh'   # result in dist-appimage/
 ```
 
 A Flatpak manifest is in `packaging/flatpak` (it builds libmpv from source; see the comments at the top).

@@ -103,7 +103,7 @@ modules:
       - install -Dm644 packaging/flatpak/io.github.tonearm.Tonearm.metainfo.xml /app/share/metainfo/io.github.tonearm.Tonearm.metainfo.xml
       - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/io.github.tonearm.Tonearm.png
       - install -Dm644 src-tauri/icons/128x128@2x.png /app/share/icons/hicolor/256x256/apps/io.github.tonearm.Tonearm.png
-      - install -Dm644 icon.svg /app/share/icons/hicolor/scalable/apps/io.github.tonearm.Tonearm.svg
+      - install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/io.github.tonearm.Tonearm.png
     sources:
       - type: dir
         path: ../..

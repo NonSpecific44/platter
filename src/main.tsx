@@ -3,6 +3,7 @@ import "./testboot";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import "@fontsource-variable/jost";
 import "./styles.css";
 import { isAndroid } from "./platform";
 

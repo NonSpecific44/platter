@@ -13,3 +13,5 @@ packaging/src
 .android-signing
 .claude/
 .updater-signing
+.build-tools
+dist-appimage

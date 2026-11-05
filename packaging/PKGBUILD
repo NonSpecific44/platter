@@ -3,7 +3,7 @@ pkgname=platter
 # Formerly "Tonearm".
 replaces=(tonearm)
 conflicts=(tonearm)
-pkgver=0.3.0
+pkgver=0.3.1
 pkgrel=1
 pkgdesc="A Plex music player for the Linux desktop"
 arch=('x86_64')
@@ -14,6 +14,8 @@ options=('!lto')
 
 build() {
   cd "$startdir/.."
+  # This package may be installed on other machines; makepkg.conf may say -march=native.
+  export RUSTFLAGS="" CFLAGS="-march=x86-64 -O2 -pipe" CXXFLAGS="-march=x86-64 -O2 -pipe"
   npm ci
   npx tauri build --no-bundle
 }
@@ -24,6 +26,6 @@ package() {
   install -Dm644 packaging/platter.desktop "$pkgdir/usr/share/applications/platter.desktop"
   install -Dm644 src-tauri/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/platter.png"
   install -Dm644 src-tauri/icons/128x128@2x.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/platter.png"
-  install -Dm644 icon.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/platter.svg"
+  install -Dm644 src-tauri/icons/icon.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/platter.png"
   install -Dm644 packaging/ufw/platter "$pkgdir/etc/ufw/applications.d/platter"
 }

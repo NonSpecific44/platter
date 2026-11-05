@@ -7,7 +7,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { Album, Artist, Hub, Track, setLocalProvider } from "./plex";
 import { server, toast, useSettings } from "./store";
 import { searchRecordings } from "./musicbrainz";
-import { isAndroid } from "./platform";
 
 export interface LocalFile {
   path: string;
@@ -261,18 +260,6 @@ export async function saveTags(path: string, tags: TagFields, coverUrl?: string)
 }
 
 // ---- folders ------------------------------------------------------------------------------------
-
-/** Asks for storage access (Android) and lists likely music folders. */
-export async function storageRoots(): Promise<string[]> {
-  if (!isAndroid()) return [];
-  await invoke("local_request_access").catch(() => undefined);
-  const r = await invoke<string>("local_roots").catch(() => "[]");
-  try {
-    return JSON.parse(r);
-  } catch {
-    return [];
-  }
-}
 
 export function addFolder(path: string) {
   const s = useSettings.getState();

@@ -10,6 +10,18 @@ import { useLibrary } from "./live";
 
 const icon = (c: any) => createElement(c, { size: 15 });
 
+/** Ways to sort album lists (Plex sort keys). */
+export const ALBUM_SORTS: [string, string][] = [
+  ["titleSort", "Album name"],
+  ["artist.titleSort,album.year", "Artist"],
+  ["addedAt:desc", "Date added"],
+  ["year:desc", "Release year"],
+  ["lastViewedAt:desc", "Recently played"],
+  ["viewCount:desc", "Most played"],
+  ["userRating:desc", "Rating"],
+  ["random", "Random"],
+];
+
 // ---- cached async data -------------------------------------------------------
 
 const dataCache = new Map<string, unknown>();

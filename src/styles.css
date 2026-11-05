@@ -1,17 +1,17 @@
 :root {
-  --accent: #f5873a;
+  --accent: #ff8a00;
   --radius: 10px;
   --sidebar-w: 232px;
   --panel-w: 360px;
   --bar-h: 92px;
-  --font: "Inter", "Cantarell", "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font: "Jost Variable", "Jost", "Futura", "Cantarell", "Noto Sans", system-ui, sans-serif;
   color-scheme: dark;
 }
 :root[data-theme="dark"] {
-  --bg: #111114;
-  --bg-side: #0b0b0d;
-  --bg-elev: #1b1b20;
-  --bg-elev2: #24242b;
+  --bg: #0e0f13;
+  --bg-side: #090a0d;
+  --bg-elev: #17181d;
+  --bg-elev2: #212228;
   --bg-hover: rgba(255, 255, 255, 0.06);
   --bg-active: rgba(255, 255, 255, 0.1);
   --text: #f2f2f4;
@@ -42,7 +42,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  font-size: 14px;
+  font-size: 15px;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   user-select: none;
@@ -775,3 +775,50 @@ input[type="color"] { width: 44px; height: 30px; border: none; background: none;
   [data-design="material"] .menu { border-radius: 28px 28px 0 0; border: none; }
   [data-design="material"] .modal { width: min(560px, 92vw); }
 }
+
+/* ---- 0.3.1: the logo's design language: near-black, soft white shapes, an orange label, grooves ---- */
+.side-brand { display: flex; align-items: center; gap: 10px; padding: 4px 6px 10px; font-size: 19px; font-weight: 600; letter-spacing: 0.01em; }
+.side-brand img { width: 30px; height: 30px; flex-shrink: 0; }
+.sidebar.collapsed .side-brand { justify-content: center; padding-inline: 0; }
+.login-logo { width: 112px; height: 112px; }
+h1, h2, h3, .card-title, .pnp-title, .np-meta h1 { letter-spacing: 0.005em; }
+.time, .seek .time, .track-dur, .track-num { font-variant-numeric: tabular-nums lining-nums; font-feature-settings: "tnum", "lnum"; }
+/* Like the record label. */
+.btn.primary, .chip.on {
+  background: var(--accent);
+  background: linear-gradient(165deg, color-mix(in srgb, var(--accent) 78%, #ffe28a), var(--accent) 55%, color-mix(in srgb, var(--accent) 86%, #d43a00));
+  border-color: transparent; color: #120a02;
+}
+.btn.primary:hover:not(:disabled) { background: var(--accent); background: linear-gradient(165deg, color-mix(in srgb, var(--accent) 70%, #ffe28a), var(--accent)); }
+[data-design="material"] .play-btn, [data-design="material"] .card-play {
+  background: var(--accent);
+  background: linear-gradient(165deg, color-mix(in srgb, var(--accent) 78%, #ffe28a), var(--accent) 55%, color-mix(in srgb, var(--accent) 86%, #d43a00));
+  color: #120a02;
+}
+[data-design="material"] .btn.primary, [data-design="material"] .chip.on { color: #120a02; }
+/* A record instead of an empty square when there's no artwork. */
+.cover:not(:has(img)) {
+  background:
+    radial-gradient(circle, #0a0a0c 0 3%, transparent 3.2%),
+    radial-gradient(circle, var(--accent) 0 17%, transparent 17.5%),
+    repeating-radial-gradient(circle, #16171b 0 2.4%, #101114 2.4% 4.2%);
+}
+.cover:not(:has(img)) .cover-fallback { display: none; }
+.login-card { background: var(--bg-elev); }
+.seek-track { min-width: 0; }
+.wave-bars { gap: 0; }
+.wave-bars i { min-width: 0; margin: 0 0.5px; }
+
+/* Track change carousel. */
+.pnp-body.swipeable { position: relative; overflow: visible; }
+.pnp-slides { position: relative; width: min(100%, 50vh); aspect-ratio: 1; }
+.pnp-slide { position: absolute; inset: 0; will-change: transform, opacity; }
+.pnp-slide .pnp-art { width: 100%; }
+.pnp-slide.animating { transition: transform 0.24s cubic-bezier(0.2, 0, 0, 1), opacity 0.24s; }
+.pnp { overflow: hidden; }
+.pnp-album { font-size: 14px; color: var(--text-faint); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.phone-bar-slides { position: relative; flex: 1; min-width: 0; height: 42px; overflow: hidden; }
+.phone-bar-slide { position: absolute; inset: 0; display: flex; align-items: center; gap: 10px; will-change: transform, opacity; }
+.phone-bar-slide.animating { transition: transform 0.22s cubic-bezier(0.2, 0, 0, 1), opacity 0.22s; }
+.sort-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--text-dim); font-size: 13px; }
+.sort-row select { flex: 1; min-width: 0; }

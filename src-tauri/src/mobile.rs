@@ -125,14 +125,10 @@ fn dynamic_colors(n: State<Native>) -> Result<Value, String> {
     call(&n, "dynamicColors", json!({}))
 }
 
+/// Opens the system folder browser. Returns the chosen folder's path, or "" if cancelled.
 #[tauri::command]
-fn local_request_access(n: State<Native>) -> Result<(), String> {
-    call(&n, "requestAccess", json!({})).map(|_| ())
-}
-
-#[tauri::command]
-fn local_roots(n: State<Native>) -> Result<String, String> {
-    call(&n, "storageRoots", json!({})).map(value_of)
+async fn local_pick_folder(n: State<'_, Native>) -> Result<String, String> {
+    call(&n, "pickFolder", json!({})).map(value_of)
 }
 
 #[tauri::command]
@@ -176,8 +172,7 @@ pub fn run() {
             auto_config,
             system_bars,
             dynamic_colors,
-            local_request_access,
-            local_roots,
+            local_pick_folder,
             update_kind,
             update_install_apk,
             crate::library::local_scan,

@@ -31,6 +31,10 @@ export function Sidebar() {
 
   return (
     <nav className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+      <div className="side-brand">
+        <img src="/icon.png" alt="" />
+        <span className="side-label">Platter</span>
+      </div>
       <div className="side-top">
         <button className="icon-btn" onClick={back} disabled={stack.length < 2} title="Back (Alt+←)">
           <ChevronLeft size={18} />

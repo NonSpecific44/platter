@@ -2,16 +2,16 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FolderPlus, LogOut, RefreshCw, Server as ServerIcon, Trash2, X } from "lucide-react";
 import { audioDevices, player, usePlayer } from "../player";
-import { EQ_BANDS, EQ_PRESETS, Settings, setExcluded, useSession, useSettings, useNav } from "../store";
+import { EQ_BANDS, EQ_PRESETS, Settings, setExcluded, toast, useSession, useSettings, useNav } from "../store";
 import { addToPlaylist, prompt } from "../actions";
-import { addFolder, removeFolder, scanLocal, storageRoots, useLocal } from "../local";
+import { addFolder, removeFolder, scanLocal, useLocal } from "../local";
 import { LidarrOptions, lidarrOptions } from "../lidarr";
 import { SCHEMES } from "../theme";
 import { TrackList } from "../components/common";
 import { QueueList } from "../components/Panels";
 import { measureFrameRate } from "../smooth";
 import { deviceName } from "../remote";
-import { isAndroid } from "../platform";
+import { isAndroid, isPhone } from "../platform";
 import { getVersion } from "@tauri-apps/api/app";
 import { checkForUpdates, installUpdate, useUpdates } from "../updates";
 
@@ -245,9 +245,12 @@ export async function addMusicFolder() {
     if (typeof picked === "string") addFolder(picked);
     return;
   }
-  const roots = await storageRoots();
-  const path = await prompt(`Folder path${roots.length ? ` (for example ${roots[0]})` : ""}`, roots[0] ?? "");
-  if (path) addFolder(path);
+  try {
+    const path = await invoke<string>("local_pick_folder");
+    if (path) addFolder(path);
+  } catch (e) {
+    toast(String(e), { error: true });
+  }
 }
 
 function LocalSettings() {
@@ -533,6 +536,11 @@ export function SettingsView() {
         <Row label="Style" hint="Material uses rounder shapes and larger controls">
           <Select k="design" options={[["material", "Material"], ["classic", "Classic"]]} />
         </Row>
+        {isPhone() && (
+          <Row label="Track change animation" hint="How artwork moves when you swipe or skip">
+            <Select k="trackAnimation" options={[["slide", "Slide"], ["stack", "Stack"], ["fade", "Fade"], ["none", "None"]]} />
+          </Row>
+        )}
         <Row label="Seek bar" hint={s.seekStyle === "waveform" ? "Needs Plex sonic analysis on the library; otherwise shows a plain bar" : undefined}>
           <Select k="seekStyle" options={[["waveform", "Waveform"], ["wavy", "Wavy (Android style)"], ["bar", "Plain bar"]]} />
         </Row>

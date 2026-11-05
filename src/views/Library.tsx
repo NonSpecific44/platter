@@ -3,7 +3,7 @@ import { Heart, Plus, Search, Shuffle, Sparkles } from "lucide-react";
 import { Album, Artist, Playlist, Track } from "../plex";
 import { player } from "../player";
 import { sectionKey, server, toast, useNav, useSession } from "../store";
-import { prompt, useData, usePaged, usePlaylists, invalidate } from "../actions";
+import { ALBUM_SORTS, prompt, useData, usePaged, usePlaylists, invalidate } from "../actions";
 import { AlbumCard, ArtistCard, ErrorBox, Loading, PlaylistCard, Shelf } from "../components/common";
 import { PageHead, RecentTiles } from "../components/Phone";
 import { useIsPhone } from "../platform";
@@ -206,20 +206,9 @@ export function Artists() {
 
 // ---- albums -----------------------------------------------------------------------
 
-const ALBUM_SORTS: [string, string][] = [
-  ["titleSort", "Title"],
-  ["artist.titleSort,album.year", "Artist"],
-  ["year:desc", "Release year"],
-  ["addedAt:desc", "Recently added"],
-  ["lastViewedAt:desc", "Recently played"],
-  ["viewCount:desc", "Most played"],
-  ["userRating:desc", "Rating"],
-  ["random", "Random"],
-];
-
 export function Albums({ genre: initialGenre }: { genre?: string }) {
   const sec = sectionKey();
-  const [sort, setSort] = useState(() => localStorage.getItem("tonearm.albumSort") ?? "addedAt:desc");
+  const [sort, setSort] = useState(() => localStorage.getItem("tonearm.albumSort") ?? "titleSort");
   const [genre, setGenre] = useState(initialGenre ?? "");
   const [unplayed, setUnplayed] = useState(false);
   const genres = useData(`genres:${sec}`, () => server().genres(sec));
