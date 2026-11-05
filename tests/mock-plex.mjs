@@ -18,6 +18,8 @@ const track = (i) => ({
 });
 const mc = (o) => ({ MediaContainer: o });
 
+const sectionDelay = (process.env.MOCK_SECTION_DELAY ?? "").split(",").filter(Boolean);
+
 // Stands in for plex.tv: devices that have published an address.
 const published = new Map();
 if (process.env.MOCK_PLAYERS) for (const d of JSON.parse(process.env.MOCK_PLAYERS)) published.set(d.clientIdentifier, d);
@@ -46,6 +48,14 @@ function route(p, q, req, body) {
     return {};
   }
   if (p === "/api/v2/resources") return [...published.values()];
+  // A server that hasn't caught up with a new sign-in yet (MOCK_SECTION_DELAY=refused,empty,…).
+  if (p === "/library/sections" && sectionDelay.length) {
+    const next = sectionDelay.shift();
+    console.log(`SECTIONS ${next}`);
+    if (next === "refused") return { __status: 401 };
+    return mc({ Directory: [] });
+  }
+  if (p === "/library/sections") return mc({ Directory: [{ key: "1", title: "Music", type: "artist" }] });
   if (p === "/identity") return mc({ machineIdentifier: "mock", version: "1" });
   if (p.startsWith("/hubs/sections")) return mc({ Hub: [
     { hubIdentifier: "recent", title: "Recently added", type: "album", key: "/hubs/home/recentlyAdded?type=9", more: true, Metadata: [...Array(12)].map((_, i) => album(i)) },
@@ -134,7 +144,9 @@ http
         return res.end(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="hsl(${hue},70%,55%)"/><stop offset="1" stop-color="hsl(${hue + 60},70%,30%)"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#g)"/></svg>`);
       }
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify(route(p, url.searchParams, req, Buffer.concat(chunks).toString())));
+      const out = route(p, url.searchParams, req, Buffer.concat(chunks).toString());
+      if (out?.__status) res.statusCode = out.__status;
+      res.end(JSON.stringify(out));
     });
   })
   .listen(port, "0.0.0.0", () => console.log(`mock plex on ${port}`));

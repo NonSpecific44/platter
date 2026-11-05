@@ -115,7 +115,83 @@ async fn update_install(app: AppHandle, manifest_url: String, token: Option<Stri
         return Ok(false);
     };
     update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
-    app.restart();
+    relaunch(&app);
+    Ok(true)
+}
+
+/// A value from the environment with any paths inside `mounts` taken out, or None if nothing's left.
+fn outside_mounts(value: &str, mounts: &[&str]) -> Option<String> {
+    if !mounts.iter().any(|m| value.contains(m)) {
+        return Some(value.to_string());
+    }
+    let kept: Vec<&str> = value.split(':').filter(|p| !mounts.iter().any(|m| p.contains(m))).collect();
+    (!kept.is_empty()).then(|| kept.join(":"))
+}
+
+/// Starts the AppImage again as if from the launcher. An AppImage points its environment into its
+/// own mount, so a plain restart keeps the old version's libraries in use and its mount alive.
+fn relaunch(app: &AppHandle) {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let Some(appimage) = std::env::var_os("APPIMAGE") else { app.restart() };
+    let appdir = std::env::var("APPDIR").unwrap_or_default();
+    let mut mounts = vec!["/.mount_"];
+    if !appdir.is_empty() {
+        mounts.push(&appdir);
+    }
+    let env = std::env::vars_os().filter_map(|(k, v)| {
+        if ["APPDIR", "APPIMAGE", "ARGV0", "OWD"].iter().any(|n| k == *n) {
+            return None;
+        }
+        match v.to_str() {
+            Some(text) => outside_mounts(text, &mounts).map(|clean| (k, clean.into())),
+            None => Some((k, v)),
+        }
+    });
+    let env: Vec<(std::ffi::OsString, std::ffi::OsString)> = env.collect();
+    // AppRun moves into its mount, and a working directory there would keep that mount alive.
+    let dir = std::env::var("OWD").ok().filter(|d| outside_mounts(d, &mounts).is_some()).or_else(|| std::env::var("HOME").ok()).unwrap_or_else(|| "/".into());
+    // The new copy has to wait for this one, or it would just hand over to it and quit.
+    const WAIT: &str = r#"i=0; while kill -0 "$1" 2>/dev/null && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done; exec "$2""#;
+    let mut command = Command::new("/bin/sh");
+    // Runs after the fork. The AppImage runtime keeps its mount until every holder of an inherited
+    // pipe has gone, which would otherwise include the new copy.
+    unsafe {
+        command.pre_exec(|| {
+            for fd in 3..1024 {
+                libc::close(fd);
+            }
+            Ok(())
+        });
+    }
+    let started = command
+        .args(["-c", WAIT, "sh", &std::process::id().to_string()])
+        .arg(&appimage)
+        .current_dir(dir)
+        .env_clear()
+        .envs(env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    if started.is_err() {
+        app.restart();
+    }
+    app.exit(0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::outside_mounts;
+
+    #[test]
+    fn strips_only_appimage_paths() {
+        let mounts = ["/.mount_", "/opt/extracted"];
+        assert_eq!(outside_mounts("/usr/bin:/bin", &mounts).as_deref(), Some("/usr/bin:/bin"));
+        assert_eq!(outside_mounts("/tmp/.mount_A/usr/bin:/usr/bin:/tmp/.mount_B/bin", &mounts).as_deref(), Some("/usr/bin"));
+        assert_eq!(outside_mounts("/opt/extracted/lib", &mounts), None);
+        assert_eq!(outside_mounts("wayland-1", &mounts).as_deref(), Some("wayland-1"));
+    }
 }
 
 #[derive(serde::Serialize)]

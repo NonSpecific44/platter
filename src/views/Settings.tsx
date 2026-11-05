@@ -154,13 +154,17 @@ function Equalizer() {
       <div className="eq-bands">
         <div className="eq-band preamp">
           <span className="eq-val">{s.eqPreamp > 0 ? "+" : ""}{s.eqPreamp}</span>
-          <input type="range" min={-12} max={6} step={0.5} value={s.eqPreamp} onChange={(e) => s.set({ eqPreamp: Number(e.target.value) })} />
+          <div className="eq-slider">
+            <input type="range" min={-12} max={6} step={0.5} value={s.eqPreamp} aria-label="Pre-amp" onChange={(e) => s.set({ eqPreamp: Number(e.target.value) })} />
+          </div>
           <span className="eq-freq">Pre</span>
         </div>
         {EQ_BANDS.map((f, i) => (
           <div className="eq-band" key={f}>
             <span className="eq-val">{s.eqGains[i] > 0 ? "+" : ""}{s.eqGains[i]}</span>
-            <input type="range" min={-12} max={12} step={0.5} value={s.eqGains[i]} onChange={(e) => setGain(i, Number(e.target.value))} />
+            <div className="eq-slider">
+              <input type="range" min={-12} max={12} step={0.5} value={s.eqGains[i]} aria-label={`${f} Hz`} onChange={(e) => setGain(i, Number(e.target.value))} />
+            </div>
             <span className="eq-freq">{f >= 1000 ? `${f / 1000}k` : f}</span>
           </div>
         ))}
