@@ -6,6 +6,7 @@ import { sectionKey, server, toast, useNav, useSession, View } from "../store";
 import { ALBUM_SORTS, prompt, useData, usePaged, usePlaylists, invalidate } from "../actions";
 import { AlbumCard, ArtistCard, ErrorBox, Loading, PlaylistCard, Shelf, TrackList } from "../components/common";
 import { ItemRows, PageHead, RecentTiles } from "../components/Phone";
+import { Mix, getMix, periodOf } from "../mixes";
 import { useIsPhone } from "../platform";
 
 // ---- home ------------------------------------------------------------------------
@@ -24,6 +25,10 @@ export function Home() {
   const phone = useIsPhone();
   const shelves = (
     <>
+      <Shelf title="Made for you" complete>
+        <MixCard id="daylist" />
+        <MixCard id="suggestions" />
+      </Shelf>
       {hubs.data?.map((h) => (
         <Shelf key={h.hubIdentifier} title={h.title} complete={!h.more} onMore={() => go(hubView(h))}>
           {h.items.map((it) => (
@@ -98,6 +103,24 @@ function TrackCard({ t }: { t: Track }) {
   return (
     <div onDoubleClick={() => player.playTracks([t])}>
       <AlbumCard a={a} sub={t.artist} />
+    </div>
+  );
+}
+
+/** A playlist Platter makes for you (see mixes.ts). Made in the background when Home opens. */
+function MixCard({ id }: { id: Mix["id"] }) {
+  const go = useNav((s) => s.go);
+  const mix = useData(`mix:${id}:${periodOf(id)}`, () => getMix(id));
+  const label = id === "daylist" ? "daylist" : "Suggestions";
+  return (
+    <div className="card" onClick={() => go({ kind: "playlist", id })}>
+      <div className="card-art">
+        <div className={`cover mix-art mix-${id}`}>
+          <span>{label}</span>
+        </div>
+      </div>
+      <div className="card-title">{mix.data?.title ?? label}</div>
+      <div className="card-sub">{mix.error ? "Couldn't make it this time" : mix.data ? `${mix.data.tracks.length} tracks` : "Putting it together…"}</div>
     </div>
   );
 }

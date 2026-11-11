@@ -8,7 +8,7 @@ import { isAndroid } from "./platform";
 export const PRODUCT = "Platter";
 /** Earlier versions called themselves Tonearm; they speak the same protocol. */
 export const isOurs = (product: string | undefined) => product === PRODUCT || product === "Tonearm";
-export const VERSION = "0.3.5";
+export const VERSION = "0.3.6";
 
 export function clientId(): string {
   let id = localStorage.getItem("tonearm.clientId");
@@ -161,6 +161,8 @@ export interface Album {
   userRating?: number;
   summary?: string;
   genres?: string[];
+  /** Plex's finer-grained styles, like "Trip Hop" within "Electronic". */
+  styles?: string[];
   studio?: string;
   leafCount?: number;
   format?: string;
@@ -248,6 +250,7 @@ export function toAlbum(m: any): Album {
     userRating: m.userRating,
     summary: m.summary,
     genres: tags(m.Genre),
+    styles: tags(m.Style),
     studio: m.studio,
     leafCount: m.leafCount,
     format,
@@ -321,6 +324,17 @@ export interface ServerInfo {
 
 type Params = Record<string, string | number | undefined>;
 
+/** How long to wait for the server to accept a connection, and to answer. */
+const CONNECT_MS = 5000;
+const REQUEST_MS = 30_000;
+
+/**
+ * Called when the server stops answering at its current address, e.g. after moving between home
+ * and mobile data. Returns the server's details once it has moved somewhere that works.
+ */
+let reconnect: (() => Promise<ServerInfo | null>) | null = null;
+export const setReconnect = (fn: () => Promise<ServerInfo | null>) => (reconnect = fn);
+
 export class Server {
   constructor(public info: ServerInfo) {}
 
@@ -330,8 +344,21 @@ export class Server {
     return u.toString();
   }
 
-  async request<T = any>(path: string, params: Params = {}, method = "GET"): Promise<T> {
-    const r = await fetch(this.url(path, params), { method, headers: plexHeaders(this.info.token) });
+  async request<T = any>(path: string, params: Params = {}, method = "GET", retry = true): Promise<T> {
+    let r: Response;
+    try {
+      r = await fetch(this.url(path, params), {
+        method,
+        headers: plexHeaders(this.info.token),
+        connectTimeout: CONNECT_MS,
+        signal: AbortSignal.timeout(REQUEST_MS),
+      });
+    } catch (e) {
+      // No answer at all: the network has probably changed. Try once more wherever the server is now.
+      const moved = retry && reconnect ? await reconnect().catch(() => null) : null;
+      if (moved && moved.uri !== this.info.uri) return new Server(moved).request<T>(path, params, method, false);
+      throw e;
+    }
     if (!r.ok) throw new Error(`Plex returned ${r.status} for ${path}`);
     const text = await r.text();
     return text ? JSON.parse(text) : ({} as T);
@@ -395,10 +422,10 @@ export class Server {
     return { items: p.items.map(toArtist), total: p.total };
   }
 
-  async albums(section: string, opts: { sort: string; genre?: string; unplayed?: boolean }, start: number, size: number) {
+  async albums(section: string, opts: { sort: string; genre?: string; style?: string; unplayed?: boolean }, start: number, size: number) {
     const p = await this.page(
       `/library/sections/${section}/all`,
-      { type: 9, sort: opts.sort, genre: opts.genre, "album.viewCount": opts.unplayed ? 0 : undefined },
+      { type: 9, sort: opts.sort, genre: opts.genre, style: opts.style, "album.viewCount": opts.unplayed ? 0 : undefined },
       start,
       size,
     );
@@ -406,7 +433,12 @@ export class Server {
   }
 
   async genres(section: string): Promise<{ key: string; title: string }[]> {
-    const c = await this.container(`/library/sections/${section}/genre`, { type: 9 });
+    return this.tagList(section, "genre");
+  }
+
+  /** Every album genre or style in the library, with the key Plex filters by. */
+  async tagList(section: string, kind: "genre" | "style"): Promise<{ key: string; title: string }[]> {
+    const c = await this.container(`/library/sections/${section}/${kind}`, { type: 9 });
     return (c.Directory ?? []).map((d: any) => ({ key: String(d.key), title: d.title }));
   }
 
@@ -441,6 +473,35 @@ export class Server {
     const items = ((c.Metadata ?? hub?.Metadata ?? []) as any[]).map(convert);
     // Not every listing reports a total, and then there's no telling whether a next page exists.
     return { items, total: (c.totalSize ?? hub?.totalSize ?? start + items.length) as number };
+  }
+
+  /** Your plays, newest first: which track, and when (seconds since 1970). */
+  async history(section: string, size: number, accountNames: string[]): Promise<{ ratingKey: string; artist: string; viewedAt: number }[]> {
+    const [c, accounts] = await Promise.all([
+      this.container("/status/sessions/history/all", {
+        sort: "viewedAt:desc",
+        librarySectionID: section,
+        "X-Plex-Container-Start": 0,
+        "X-Plex-Container-Size": size,
+      }),
+      this.container("/accounts").catch(() => ({})),
+    ]);
+    // Other people on the same server have their own history.
+    const names = new Set(accountNames.filter(Boolean).map((n) => n.toLowerCase()));
+    const mine = new Set(((accounts as any).Account ?? []).filter((a: any) => a.name && names.has(String(a.name).toLowerCase())).map((a: any) => a.id));
+    return ((c.Metadata ?? []) as any[])
+      .filter((m) => m.type === "track" && (!mine.size || mine.has(m.accountID)))
+      .map((m) => ({ ratingKey: String(m.ratingKey), artist: m.grandparentTitle ?? "", viewedAt: m.viewedAt ?? 0 }));
+  }
+
+  /** Full details for many tracks at once. */
+  async tracks(keys: string[]): Promise<Track[]> {
+    const out: Track[] = [];
+    for (let i = 0; i < keys.length; i += 50) {
+      const c = await this.container(`/library/metadata/${keys.slice(i, i + 50).join(",")}`);
+      out.push(...((c.Metadata ?? []) as any[]).filter((m) => m.type === "track").map(toTrack));
+    }
+    return out;
   }
 
   async randomAlbums(section: string, count: number) {

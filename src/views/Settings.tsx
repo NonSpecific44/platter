@@ -369,7 +369,7 @@ function Exclusions() {
   const rows = (["artists", "albums", "tracks"] as const).flatMap((kind) => Object.entries(x[kind]).map(([key, name]) => ({ kind, key, name })));
   return (
     <>
-      <Row label="Excluded from autoplay and shuffle" hint={rows.length ? undefined : "Choose “Exclude from autoplay” on any track or album. You can still play them yourself."}>
+      <Row label="Excluded from autoplay and shuffle" hint={rows.length ? "Shared with your other devices." : "Choose “Exclude from autoplay” on any track or album. You can still play them yourself. Shared with your other devices."}>
         <span className="dim small">{rows.length || "None"}</span>
       </Row>
       {rows.map((r) => (

@@ -18,7 +18,8 @@
 // devices on the same subnet, and also Plex's own apps.
 //
 // Controlling: picking another device routes every `player` action to it and mirrors its state
-// into usePlayer, so the whole UI (player bar, queue, lyrics) follows the remote device.
+// into usePlayer, so the whole UI (player bar, queue, lyrics) follows the remote device. Like
+// Spotify, a device with nothing playing follows whichever device starts playing by itself.
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -27,6 +28,7 @@ import { PRODUCT, Track, VERSION, clientId, getPlayers, getUser, isOurs, plexHea
 import { currentTrack, player, playerFlags, usePlayer } from "./player";
 import { fmtTime, server, toast, useSession, useSettings } from "./store";
 import { isAndroid } from "./platform";
+import { Shared, mergeShared, onSharedChange, sharedDigest, sharedSnapshot, watchShared } from "./shared";
 
 export { isAndroid };
 
@@ -259,8 +261,17 @@ async function route(r: IncomingRequest): Promise<{ status: number; contentType:
       if (!msg.device?.clientId) return { status: 400, contentType: "text/plain", body: "bad sync" };
       receivePeer({ ...msg.device, host: r.from }, msg.state, true);
       noteControlled(msg);
+      receiveShared(msg.device.clientId, msg);
       for (const c of msg.commands ?? []) await runCommand(c);
-      const reply: SyncMessage = { device: myDevice(), state: stateFor(msg.have), commands: takeOutbox(msg.device.clientId), have: queueVersionOf(msg.device.clientId), controlling: isControlling(msg.device.clientId) };
+      const reply: SyncMessage = {
+        device: myDevice(),
+        state: stateFor(msg.have),
+        commands: takeOutbox(msg.device.clientId),
+        have: queueVersionOf(msg.device.clientId),
+        controlling: isControlling(msg.device.clientId),
+        sharedDigest: sharedDigest(),
+        ...sharedFor(msg.device.clientId, msg.sharedDigest),
+      };
       return { status: 200, contentType: "application/json", body: JSON.stringify(reply) };
     }
     if (p === "/tonearm/call") {
@@ -410,6 +421,23 @@ interface SyncMessage {
   have?: number;
   /** The sender is controlling the receiver, which should collect commands promptly. */
   controlling?: boolean;
+  /** Fingerprint of the sender's shared settings, and the settings themselves when they differ. */
+  sharedDigest?: string;
+  shared?: Shared;
+}
+
+/** The shared-settings fingerprint each peer last reported. */
+const peerDigests = new Map<string, string>();
+
+/** Our shared settings, if `id` doesn't already have the same. */
+function sharedFor(id: string, theirs?: string) {
+  const mine = sharedDigest();
+  return (theirs ?? peerDigests.get(id)) === mine ? {} : { shared: sharedSnapshot() };
+}
+
+function receiveShared(id: string, msg: SyncMessage) {
+  if (msg.shared) mergeShared(msg.shared, id > clientId());
+  if (msg.sharedDigest) peerDigests.set(id, msg.sharedDigest);
 }
 
 const isControlling = (id: string) => useRemote.getState().target?.clientId === id;
@@ -513,14 +541,24 @@ async function syncWith(p: Peer) {
   // Unreachable devices get a retry every 20 s; they may reach us instead.
   if (!p.reachable && Date.now() - (lastTry.get(id) ?? 0) < 20_000) return;
   lastTry.set(id, Date.now());
-  const commands = takeOutbox(id);
-  const msg: SyncMessage = { device: myDevice(), state: stateFor(sentAck.get(id)), commands, have: queueVersionOf(id), controlling: isControlling(id) };
+  let commands = takeOutbox(id);
+  // A command that can't be sent mustn't hold up the ones behind it, or every sync after it.
+  commands = commands.filter((c) => {
+    try {
+      JSON.stringify(c);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  const msg: SyncMessage = { device: myDevice(), state: stateFor(sentAck.get(id)), commands, have: queueVersionOf(id), controlling: isControlling(id), sharedDigest: sharedDigest(), ...sharedFor(id) };
   try {
     const r = await remoteFetch(p.device, "/tonearm/sync", { method: "POST", body: JSON.stringify(msg) }, 4000);
     const reply = (await r.json()) as SyncMessage;
     patchPeer(id, (cur) => (cur ? { ...cur, reachable: true } : cur));
     sentAck.set(id, reply.have);
     noteControlled(reply);
+    receiveShared(id, reply);
     receivePeer({ ...reply.device, host: p.device.host }, reply.state, false);
     for (const c of reply.commands ?? []) await runCommand(c);
   } catch {
@@ -767,11 +805,13 @@ export async function playThere(id: string) {
 
 let localSnapshot: Partial<ReturnType<typeof usePlayer.getState>> | null = null;
 
-function mirror(s: Snapshot) {
+function mirror(s: Snapshot, age = 0) {
+  const playing = s.loaded && !s.paused && !s.buffering;
   usePlayer.setState({
     queue: s.queue,
     index: s.index,
-    position: s.position,
+    // The snapshot is a moment old by the time it's shown.
+    position: Math.min(s.duration || Infinity, s.position + (playing ? age / 1000 : 0)),
     duration: s.duration,
     paused: s.paused,
     loaded: s.loaded,
@@ -785,8 +825,12 @@ function mirror(s: Snapshot) {
   });
 }
 
+/** The device the user moved away from, and the playback they left playing there. */
+let declined: { id: string; since: number } | null = null;
+
 /** Mirror another device here: the player bar, queue and controls all act on it. */
 export async function control(id: string) {
+  declined = null;
   const p = useRemote.getState().peers[id];
   if (!p || useRemote.getState().target?.clientId === id) return;
   if (useRemote.getState().target) await disconnect();
@@ -796,7 +840,7 @@ export async function control(id: string) {
   useRemote.setState({ target: p.device });
   playerFlags.remote = true;
   // Until it reports in, show it as idle rather than this device's own queue.
-  if (p.state) mirror(p.state);
+  if (p.state) mirror(p.state, Date.now() - p.stateAt);
   else usePlayer.setState({ queue: [], original: null, index: 0, position: 0, duration: 0, loaded: false, paused: true, buffering: false });
   syncSoon();
 }
@@ -806,6 +850,8 @@ export async function disconnect(takeOver = false) {
   const d = useRemote.getState().target;
   if (!d) return;
   const p = useRemote.getState().peers[d.clientId];
+  // Don't follow it straight back while it carries on with the same music.
+  declined = { id: d.clientId, since: p?.state?.playingSince ?? 0 };
   const np = takeOver && p ? nowPlaying(p) : null;
   useRemote.setState({ target: null });
   playerFlags.remote = false;
@@ -821,14 +867,36 @@ export async function disconnect(takeOver = false) {
 function onPeerState(id: string) {
   const p = useRemote.getState().peers[id];
   if (!p?.state) return;
-  if (useRemote.getState().target?.clientId === id) mirror(p.state);
+  if (useRemote.getState().target?.clientId === id) mirror(p.state, Date.now() - p.stateAt);
   const s = usePlayer.getState();
   const here = s.loaded && !s.paused && !playerFlags.remote;
   const there = p.state.loaded && !p.state.paused;
   if (here && there && useSettings.getState().exclusivePlayback && p.state.playingSince > playingSince) {
-    void local.pause();
-    toast(`Paused here: now playing on ${p.device.name}`, { action: { label: "Control it", run: () => void control(id) } });
+    void local.pause().then(followPlaying);
+    toast(`Now playing on ${p.device.name}`);
+    return;
   }
+  followPlaying();
+}
+
+/**
+ * With nothing playing here, show and control whatever another Platter is playing, as Spotify
+ * does. Ends when that device goes away.
+ */
+function followPlaying() {
+  const { target, peers } = useRemote.getState();
+  if (target) {
+    const p = peers[target.clientId];
+    if (!p || Date.now() - p.lastSeen > 60_000) void disconnect();
+    return;
+  }
+  if (playingHere()) return;
+  const playing = Object.values(peers).find((p) => {
+    const np = nowPlaying(p);
+    if (!np?.playing || !np.controllable || !p.state) return false;
+    return !(declined?.id === p.device.clientId && declined.since === p.state.playingSince);
+  });
+  if (playing) void control(playing.device.clientId);
 }
 
 // ---- one device at a time ---------------------------------------------------------------
@@ -878,6 +946,17 @@ function watchExclusive() {
   });
 }
 
+/** Shows a command's effect straight away; the device's next report confirms or corrects it. */
+function showAtOnce(m: Routed, args: unknown[]) {
+  const s = usePlayer.getState();
+  if (!s.loaded) return;
+  if (m === "toggle") usePlayer.setState({ paused: !s.paused });
+  else if (m === "play") usePlayer.setState({ paused: false });
+  else if (m === "pause") usePlayer.setState({ paused: true });
+  else if (m === "seek") usePlayer.setState({ position: Number(args[0]) || 0 });
+  else if (m === "seekBy") usePlayer.setState({ position: Math.max(0, s.position + (Number(args[0]) || 0)) });
+}
+
 // ---- setup --------------------------------------------------------------------------------
 
 export async function initRemote() {
@@ -887,11 +966,16 @@ export async function initRemote() {
     (player as any)[m] = (...args: any[]) => {
       const t = useRemote.getState().target;
       if (!t) return orig(...args);
-      sendCommand(t.clientId, m, args);
+      // Buttons wired straight to an action pass their click event along, which can't be sent.
+      const sendable = args.filter((a) => !(a instanceof Event) && !(a && typeof a === "object" && "nativeEvent" in a));
+      sendCommand(t.clientId, m, sendable);
+      showAtOnce(m, sendable);
     };
   }
   watchState();
   watchExclusive();
+  watchShared();
+  onSharedChange(syncSoon);
   hostName = await invoke<string>("remote_hostname").catch(() => "");
   await listen<IncomingRequest>("remote://request", async (e) => {
     const r = e.payload;
@@ -907,12 +991,14 @@ export async function initRemote() {
   useSettings.subscribe((s, p) => s.deviceName !== p.deviceName && void announce());
   // Changes here reach the others straight away; otherwise sync briskly while anything plays.
   usePlayer.subscribe((s, p) => {
+    // While mirroring another device, these changes came from it; commands sync by themselves.
+    if (playerFlags.remote) return;
     if (s.queue !== p.queue || s.index !== p.index || s.paused !== p.paused || s.loaded !== p.loaded) syncSoon();
   });
   const tick = () => {
     const anyPlaying =
       playingHere() || Object.values(useRemote.getState().peers).some((p) => nowPlaying(p)?.playing) || !!useRemote.getState().target;
-    void syncAll();
+    void syncAll().then(followPlaying);
     // A device behind a firewall only gets commands by asking, so it has to ask often enough to
     // feel responsive, even in the tray. On a phone in the background, save the battery.
     const delay = Date.now() < controlledUntil ? 1000 : document.hidden ? (isAndroid() ? 20_000 : 5000) : anyPlaying ? 2000 : 3000;

@@ -1,24 +1,33 @@
 import { useMemo, useState } from "react";
-import { ChevronRight, Heart, ListEnd, ListStart, MoreHorizontal, Pencil, Play, Radio, Search, Shuffle, Trash2 } from "lucide-react";
+import { ChevronRight, Heart, ListEnd, ListStart, MoreHorizontal, Pencil, Play, Radio, RefreshCw, Search, Shuffle, Trash2 } from "lucide-react";
 import { Album, Track, toTrack } from "../plex";
 import { player } from "../player";
 import { fmtDuration, openMenu, sectionKey, server, toast, useNav } from "../store";
 import { albumMenu, confirmDialog, invalidate, playArtist, prompt, ratingOf, setLoved, trackRadio, useData, usePlaylists, useRatings } from "../actions";
 import { AlbumCard, Cover, ErrorBox, Loading, Shelf, TrackList } from "../components/common";
+import { Mix, getMix, periodOf } from "../mixes";
 
-function Hero({ thumb, round, kicker, title, children, art }: {
+function Hero({ thumb, round, kicker, title, children, art, mix }: {
   thumb?: string;
   round?: boolean;
   kicker: string;
   title: string;
   children?: React.ReactNode;
   art?: string;
+  /** One of Platter's own mixes, which has a drawn cover instead of artwork. */
+  mix?: Mix["id"];
 }) {
   const bg = art ? server().imageUrl(art, 1200) : undefined;
   return (
     <header className={`hero ${bg ? "has-art" : ""}`}>
       {bg && <div className="hero-bg" style={{ backgroundImage: `url("${bg}")` }} />}
-      <Cover thumb={thumb} round={round} className="hero-cover" icon={round ? "artist" : "album"} />
+      {mix ? (
+        <div className={`cover hero-cover mix-art mix-${mix}`}>
+          <span>{mix === "daylist" ? "daylist" : "Suggestions"}</span>
+        </div>
+      ) : (
+        <Cover thumb={thumb} round={round} className="hero-cover" icon={round ? "artist" : "album"} />
+      )}
       <div className="hero-text">
         <div className="kicker">{kicker}</div>
         <h1 title={title}>{title}</h1>
@@ -220,10 +229,17 @@ async function lovedTracks(): Promise<Track[]> {
   return p.items.map(toTrack);
 }
 
+const isMixId = (id: string): id is Mix["id"] => id === "daylist" || id === "suggestions";
+
 export function PlaylistView({ id }: { id: string }) {
   const isLoved = id === "loved";
-  const meta = useData(isLoved ? null : `playlistMeta:${id}`, () => server().playlist(id));
-  const tracks = useData(`playlist:${id}`, () => (isLoved ? lovedTracks() : server().playlistTracks(id)));
+  const isMix = isMixId(id);
+  const virtual = isLoved || isMix;
+  const [fresh, setFresh] = useState(0);
+  const mix = useData(isMix ? `mix:${id}:${periodOf(id)}:${fresh}` : null, () => getMix(id as Mix["id"], fresh > 0));
+  const meta = useData(virtual ? null : `playlistMeta:${id}`, () => server().playlist(id));
+  const listed = useData(isMix ? null : `playlist:${id}`, () => (isLoved ? lovedTracks() : server().playlistTracks(id)));
+  const tracks = isMix ? { data: mix.data?.tracks, error: mix.error, loading: mix.loading, reload: mix.reload } : listed;
   const [q, setQ] = useState("");
   const go = useNav((s) => s.go);
   const list = tracks.data ?? [];
@@ -233,8 +249,8 @@ export function PlaylistView({ id }: { id: string }) {
   }, [list, q]);
 
   if (tracks.error) return <ErrorBox error={tracks.error} retry={tracks.reload} />;
-  const title = isLoved ? "Loved tracks" : meta.data?.title ?? "Playlist";
-  const smart = isLoved || meta.data?.smart;
+  const title = isLoved ? "Loved tracks" : isMix ? mix.data?.title ?? (id === "daylist" ? "daylist" : "Suggestions") : meta.data?.title ?? "Playlist";
+  const smart = virtual || meta.data?.smart;
   const total = list.reduce((s, x) => s + x.duration, 0);
 
   const rename = async () => {
@@ -257,7 +273,7 @@ export function PlaylistView({ id }: { id: string }) {
 
   return (
     <div className="view">
-      <Hero thumb={meta.data?.thumb} kicker={smart ? "Smart playlist" : "Playlist"} title={title}>
+      <Hero thumb={meta.data?.thumb} mix={isMix ? id : undefined} kicker={isMix ? (id === "daylist" ? "daylist" : "Made for you") : smart ? "Smart playlist" : "Playlist"} title={title}>
         <div className="hero-sub dim">
           {list.length} tracks{total ? ` · ${fmtDuration(total)}` : ""}
         </div>
@@ -271,6 +287,11 @@ export function PlaylistView({ id }: { id: string }) {
           <button className="icon-btn big" title="Add to queue" onClick={() => player.addToQueue(list)}>
             <ListEnd size={18} />
           </button>
+          {isMix && (
+            <button className="icon-btn big" title="Make a new one" disabled={mix.loading} onClick={() => setFresh((n) => n + 1)}>
+              <RefreshCw size={17} />
+            </button>
+          )}
           {!smart && (
             <>
               <button className="icon-btn big" title="Rename" onClick={rename}>
@@ -301,7 +322,7 @@ export function PlaylistView({ id }: { id: string }) {
           onRemoved={tracks.reload}
         />
       )}
-      {!tracks.loading && !list.length && <p className="dim pad">{isLoved ? "Tracks you love (♥) show up here." : "This playlist is empty. Right-click any track → Add to playlist."}</p>}
+      {!tracks.loading && !list.length && <p className="dim pad">{isMix ? "Not enough listening history yet. Play some music and check back later." : isLoved ? "Tracks you love (♥) show up here." : "This playlist is empty. Right-click any track → Add to playlist."}</p>}
     </div>
   );
 }

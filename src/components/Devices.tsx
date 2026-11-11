@@ -6,7 +6,6 @@ import { usePlayer } from "../player";
 import { fmtTime } from "../store";
 import { isOurs } from "../plex";
 import { Peer, control, deviceName, disconnect, discover, isAndroid, nowPlaying, playHere, playThere, sendCommand, useOutput, useRemote } from "../remote";
-import { Cover } from "./common";
 
 export const useDevicesSheet = create<{ open: boolean; set: (open: boolean) => void }>((set) => ({ open: false, set: (open) => set({ open }) }));
 
@@ -157,56 +156,6 @@ export function DevicesSheet() {
           </p>
         )}
       </div>
-    </div>
-  );
-}
-
-/** Shown when nothing plays here but another device is: live progress and one-tap handoff. */
-export function ElsewhereBar() {
-  useTick(500);
-  const peers = useRemote((s) => s.peers);
-  const target = useRemote((s) => s.target);
-  const playingHere = usePlayer((s) => s.loaded && !s.paused);
-  const loadedHere = usePlayer((s) => s.loaded);
-  const [dismissed, setDismissed] = useState<string | null>(null);
-  const openSheet = useDevicesSheet((s) => s.set);
-  if (target || playingHere) return null;
-  const all = Object.values(peers).map((p) => ({ p, np: nowPlaying(p) }));
-  // Something playing elsewhere; or, with nothing loaded here, something paused elsewhere.
-  const hit = all.find(({ np }) => np?.playing) ?? (loadedHere ? undefined : all.find(({ np }) => np));
-  if (!hit || !hit.np || dismissed === hit.p.device.clientId + hit.np.track.ratingKey) return null;
-  const { p, np } = hit;
-  return (
-    <div className="elsewhere" onClick={() => openSheet(true)}>
-      <Cover thumb={np.track.thumb} className="elsewhere-art" />
-      <div className="elsewhere-text">
-        <div className="elsewhere-title">
-          {np.track.title} <span className="dim">· {np.track.artist}</span>
-        </div>
-        <div className="elsewhere-where">
-          <DeviceIcon p={p} size={13} /> {np.playing ? "Listening on" : "Paused on"} {p.device.name} · {fmtTime(np.position)}
-        </div>
-        <Progress position={np.position} duration={np.duration} />
-      </div>
-      <button
-        className="btn small primary"
-        onClick={(e) => {
-          e.stopPropagation();
-          void playHere(p.device.clientId);
-        }}
-      >
-        Play here
-      </button>
-      <button
-        className="icon-btn"
-        title="Hide"
-        onClick={(e) => {
-          e.stopPropagation();
-          setDismissed(p.device.clientId + np.track.ratingKey);
-        }}
-      >
-        <X size={16} />
-      </button>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import { initPlayer, offerHandoff, player, usePlayer } from "./player";
-import { refreshLibrary, startLive } from "./live";
+import { refreshLibrary, startLive, useLibrary } from "./live";
 import { invoke } from "@tauri-apps/api/core";
 import { initRemote } from "./remote";
 import { applyScheme } from "./theme";
@@ -11,8 +11,9 @@ import { MetadataEditor } from "./components/Metadata";
 import { LocalView } from "./views/Local";
 import { RequestsView } from "./views/Requests";
 import { initLocal } from "./local";
-import { LibraryView, PhoneBar, PhoneNav, PhoneNowPlaying, SearchView, useEdgeSwipeBack } from "./components/Phone";
-import { isAndroid, useIsPhone } from "./platform";
+import { LibraryView, PhoneBar, PhoneNav, PhoneNowPlaying, PullToRefresh, SearchView, useEdgeSwipeBack } from "./components/Phone";
+import { isAndroid, isTv, useIsPhone } from "./platform";
+import { startTvNavigation } from "./tv";
 import { initAndroid, initBackButton } from "./backButton";
 import { startUpdateChecks } from "./updates";
 import { server, useNav, useSession, useSettings } from "./store";
@@ -48,7 +49,8 @@ function useTheme() {
   }, [design]);
 
   useEffect(() => {
-    (document.documentElement.style as any).zoom = String(uiScale);
+    // Seen from across the room, so everything is bigger on a TV.
+    (document.documentElement.style as any).zoom = String(uiScale * (isTv() ? 1.1 : 1));
   }, [uiScale]);
 
   useEffect(() => {
@@ -105,6 +107,8 @@ function useShortcuts() {
       if (e.altKey && e.key === "ArrowLeft") return e.preventDefault(), nav.back();
       if (e.altKey && e.key === "ArrowRight") return e.preventDefault(), nav.fwd();
       if (typing || nav.palette || e.altKey) return;
+      // On a TV the arrow keys move around the screen instead (tv.ts).
+      if (isTv() && e.key.startsWith("Arrow")) return;
 
       const p = usePlayer.getState();
       switch (e.key) {
@@ -170,6 +174,7 @@ function useShortcuts() {
 // ---- layout ----------------------------------------------------------------------------
 
 function CurrentView() {
+  const phone = useIsPhone();
   const v = useNav((s) => s.stack[s.stack.length - 1]);
   const depth = useNav((s) => s.stack.length);
   const lastDepth = useRef(depth);
@@ -246,6 +251,7 @@ function CurrentView() {
   }
   return (
     <main className={`main ${motion}`} ref={ref} key={key}>
+      {phone && <PullToRefresh page={ref} />}
       {body}
     </main>
   );
@@ -284,6 +290,7 @@ function Main() {
       initBackButton();
       initAndroid();
     }
+    if (isTv()) startTvNavigation();
     void initLocal();
     restoreSaneSize();
     ensureConnection(true).then(() => {
@@ -294,7 +301,12 @@ function Main() {
       void initRemote();
       startUpdateChecks();
     });
-    return useSession.subscribe((s, prev) => s.server?.uri !== prev.server?.uri && startLive());
+    return useSession.subscribe((s, prev) => {
+      if (!prev.server || s.server?.uri === prev.server.uri) return;
+      startLive();
+      // Anything that failed or stalled at the old address loads again from the new one.
+      useLibrary.setState((l) => ({ generation: l.generation + 1 }));
+    });
   }, []);
 
   if (mini) return <MiniPlayer />;

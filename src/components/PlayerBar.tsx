@@ -4,7 +4,7 @@ import {
   SkipForward, Volume1, Volume2, VolumeX, Gauge, OctagonPause, Loader2,
 } from "lucide-react";
 import { isAndroid, useRemote } from "../remote";
-import { DevicesButton, ElsewhereBar } from "./Devices";
+import { DevicesButton, useDevicesSheet } from "./Devices";
 import { currentTrack, player, usePlayer } from "../player";
 import { fmtTime, openMenu, server, useNav, useSettings, MenuItem } from "../store";
 import { Cover, Heart_ } from "./common";
@@ -164,7 +164,9 @@ export function usePlayhead(paint: (seconds: number) => void, bar?: React.RefObj
       const running = s.loaded && !s.paused && !s.buffering;
       let est = anchor.pos;
       // Cap the extrapolation so a stalled stream doesn't run away from the real position.
-      if (running) est += (Math.min(performance.now() - anchor.at, 1200) / 1000) * useSettings.getState().speed;
+      // Another device reports every second or two, so its position runs on for longer.
+      const cap = useRemote.getState().target ? 6000 : 1200;
+      if (running) est += (Math.min(performance.now() - anchor.at, cap) / 1000) * useSettings.getState().speed;
       if (s.duration) est = Math.min(est, s.duration);
       // Reports jitter by a few ms; don't let that tug the bar backwards.
       if (running && est < shown && shown - est < 0.25) est = shown;
@@ -272,8 +274,13 @@ function moreMenu(): MenuItem[] {
 
 function RemoteBadge() {
   const target = useRemote((s) => s.target);
+  const open = useDevicesSheet((s) => s.set);
   if (!target) return null;
-  return <div className="pb-remote">Playing on {target.name}</div>;
+  return (
+    <div className="pb-remote" onClick={() => open(true)} title="Devices">
+      Playing on {target.name}
+    </div>
+  );
 }
 
 export function PlayerBar() {
@@ -282,7 +289,6 @@ export function PlayerBar() {
   const { panel, setPanel, setNowPlaying, go } = useNav();
   return (
     <footer className="playerbar">
-      <ElsewhereBar />
       <div className="pb-left">
         {track ? (
           <>

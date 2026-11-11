@@ -7,7 +7,7 @@
 // answers pointing at private addresses. So a LAN address is also tried directly over plain http,
 // as a last resort before leaving the LAN.
 import { fetch } from "@tauri-apps/plugin-http";
-import { Connection, getServers, plexHeaders, ServerInfo } from "./plex";
+import { Connection, getServers, plexHeaders, ServerInfo, setReconnect } from "./plex";
 import { toast, useSession } from "./store";
 
 const PROBE_MS = 2500;
@@ -81,6 +81,11 @@ async function refreshConnections() {
 }
 
 let running: Promise<boolean> | null = null;
+
+setReconnect(async () => {
+  await ensureConnection();
+  return useSession.getState().server ?? null;
+});
 
 /**
  * Moves to the best reachable address. Returns true if the address changed. With `report`, says

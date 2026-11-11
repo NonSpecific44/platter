@@ -2,18 +2,20 @@
 // the big streaming apps. Used on Android and in very narrow windows.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  ChevronDown, ChevronRight, Heart, Home, Inbox, Library, ListMusic, Mic2, Pause, Play, Search, Settings, X,
+  ChevronDown, ChevronRight, Heart, Home, Inbox, Library, ListMusic, Mic2, Pause, Play, RefreshCw, Search, Settings, X,
 } from "lucide-react";
 import { Album, Artist, Hub, Playlist, SEARCH_LIMIT, Track } from "../plex";
 import { player, usePlayer } from "../player";
 import { openMenu, sectionKey, server, useNav, useSettings, View } from "../store";
 import { ALBUM_SORTS, albumMenu, playAlbum, trackMenu, useData, usePaged, usePlaylists } from "../actions";
-import { useRemote } from "../remote";
+import { discover, useRemote } from "../remote";
+import { ensureConnection } from "../connection";
+import { refreshLibrary } from "../live";
 import { lidarrConfigured } from "../lidarr";
 import { Cover, Heart_, Loading } from "./common";
 import { SeekBar, Transport, usePlayhead } from "./PlayerBar";
 import { LyricsView, QueueList } from "./Panels";
-import { DevicesButton, ElsewhereBar, useDevicesSheet } from "./Devices";
+import { DevicesButton, useDevicesSheet } from "./Devices";
 
 // ---- gestures -----------------------------------------------------------------------------
 
@@ -80,12 +82,79 @@ function settle(el: HTMLElement | null, css: string, then?: () => void) {
   }, 200);
 }
 
+const PULL_PX = 64;
+
+/** Pull down at the top of a page to load it again. */
+export function PullToRefresh({ page }: { page: React.RefObject<HTMLElement | null> }) {
+  const [pull, setPull] = useState(0);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const el = page.current;
+    if (!el) return;
+    let start: number | null = null;
+    let startX = 0;
+    let dist = 0;
+    const down = (e: TouchEvent) => {
+      dist = 0;
+      const own = (e.target as Element).closest(".sheet, .pnp, .eq, .seek-track, input");
+      start = el.scrollTop <= 0 && e.touches.length === 1 && !own ? e.touches[0].clientY : null;
+      startX = e.touches[0]?.clientX ?? 0;
+    };
+    const move = (e: TouchEvent) => {
+      if (start === null) return;
+      dist = e.touches[0].clientY - start;
+      // Scrolling up, sideways (a row of cards), or the page moved: not a pull after all.
+      if (dist < 0 || el.scrollTop > 0 || Math.abs(e.touches[0].clientX - startX) > Math.max(24, dist)) {
+        start = null;
+        setPull(0);
+        return;
+      }
+      // Not shown until it's clearly a pull, so a sideways swipe doesn't flash it.
+      setPull(dist < 16 ? 0 : Math.min(dist * 0.5, PULL_PX * 1.4));
+    };
+    const up = async () => {
+      const go = start !== null && dist * 0.5 >= PULL_PX;
+      start = null;
+      setPull(0);
+      if (!go) return;
+      setBusy(true);
+      // Short enough to feel quick, long enough to see that something happened.
+      const shown = new Promise((r) => setTimeout(r, 700));
+      void refreshLibrary(false);
+      usePlaylists.getState().refresh();
+      void discover(true);
+      // If the network changed, this moves to the right address, and the page reloads again from there.
+      await Promise.all([shown, ensureConnection().catch(() => false)]);
+      setBusy(false);
+    };
+    el.addEventListener("touchstart", down, { passive: true });
+    el.addEventListener("touchmove", move, { passive: true });
+    el.addEventListener("touchend", up);
+    el.addEventListener("touchcancel", up);
+    return () => {
+      el.removeEventListener("touchstart", down);
+      el.removeEventListener("touchmove", move);
+      el.removeEventListener("touchend", up);
+      el.removeEventListener("touchcancel", up);
+    };
+  }, [page]);
+  if (!pull && !busy) return null;
+  const ready = pull >= PULL_PX;
+  return (
+    <div className="ptr" aria-hidden>
+      <span className={busy ? "busy" : ready ? "ready" : ""} style={{ transform: `translateY(${busy ? PULL_PX : pull}px) rotate(${busy ? 0 : pull * 4}deg)` }}>
+        <RefreshCw size={18} className={busy ? "spin" : ""} />
+      </span>
+    </div>
+  );
+}
+
 /** Swipe right on a page to go back. */
 export function useEdgeSwipeBack() {
   const page = () => document.querySelector<HTMLElement>(".app.phone .main");
   return useSwipe({
     // Things that scroll or drag sideways keep their swipes.
-    accept: (e) => !(e.target as Element).closest(".shelf-row, .seek-track, .chips, .phone-bar, .elsewhere, .pnp, .sheet, .menu, input, .eq, .qrow"),
+    accept: (e) => !(e.target as Element).closest(".shelf-row, .seek-track, .chips, .phone-bar, .pnp, .sheet, .menu, input, .eq, .qrow"),
     onMove(axis, d) {
       if (axis !== "x" || d <= 0 || useNav.getState().stack.length < 2) return;
       const el = page();
@@ -291,7 +360,6 @@ export function PhoneBar() {
   );
   return (
     <div className="phone-bar-wrap">
-      <ElsewhereBar />
       {!track && target && (
         <div className="phone-bar">
           <div className="phone-bar-text phone-bar-idle">

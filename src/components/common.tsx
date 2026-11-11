@@ -2,7 +2,7 @@ import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Disc3, Heart, Music, Play, User, X } from "lucide-react";
 import { Album, Artist, Playlist, Track, fileType } from "../plex";
 import { player, usePlayer } from "../player";
-import { MenuItem, fmtTime, openMenu, server, useMenu, useNav, useToasts } from "../store";
+import { MenuItem, fmtTime, openMenu, server, useMenu, useNav, useSession, useToasts } from "../store";
 import { isAndroid, isPhone } from "../platform";
 import { localMatch } from "../local";
 import { attachShelfWheel, pageStride, smoothScrollBy } from "../smooth";
@@ -35,8 +35,10 @@ export function Cover({ thumb, round, className = "", icon }: { thumb?: string; 
   const [failed, setFailed] = useState(false);
   const [width, setWidth] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
+  // Covers come from the server's current address, which changes with the network.
+  const address = useSession((s) => s.server?.uri);
   useLayoutEffect(() => observeWidth(ref.current!, setWidth), []);
-  useEffect(() => setFailed(false), [thumb]);
+  useEffect(() => setFailed(false), [thumb, address]);
   const device = width * (window.devicePixelRatio || 1);
   // Local covers come at whatever size the file holds, so they always need scaling.
   const exact = device > 0 && Math.abs(device - Math.round(device)) < 0.01 && !thumb?.startsWith("local-cover:");

@@ -3,13 +3,24 @@ package io.github.tonearm.Tonearm
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.app.UiModeManager
+import android.content.res.Configuration
 import android.os.Bundle
+import android.webkit.WebView
 import android.view.View
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
+  // Tells the UI it's on a TV (see platform.ts), where it switches to D-pad navigation.
+  override fun onWebViewCreate(webView: WebView) {
+    val ui = getSystemService(UI_MODE_SERVICE) as? UiModeManager
+    if (ui?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION) {
+      webView.settings.userAgentString = webView.settings.userAgentString + " PlatterTV"
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)

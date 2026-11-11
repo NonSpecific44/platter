@@ -30,8 +30,9 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 - Loves and ratings sync both ways. Playlists can be created, edited and reordered.
 - **Live library updates** through the server's notification socket, plus a refresh button (F5) that can also start a library scan (Shift+F5)
 
-**Autoplay**
-- When the queue runs out, Platter keeps going with similar music. It uses Plex's sonic analysis when available, then tracks by the same and similar artists, then the rest of your library. Turn it off in Settings → Playback.
+**Autoplay and mixes**
+- When the queue runs out, Platter keeps going with similar music. It uses Plex's sonic analysis when available, then tracks by the same and similar artists, then albums in the same styles and genres. Random tracks are only a last resort. Turn it off in Settings → Playback.
+- **Made for you** on Home: a **daylist** built from what you play at this time of day, renamed and remade through the day, and **Suggestions**: music you haven't heard much, near what you play most, remade daily.
 
 **Devices (like Spotify Connect)**
 - Every Platter on your account shows what your other devices are playing, with live progress. A "Listening on …" bar appears when music is playing somewhere else.
@@ -39,6 +40,8 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 - The devices button lists your devices. Pick one to send your music there and control it from here; the player bar, queue and lyrics follow that device.
 - One device plays at a time: starting music on one pauses Platter everywhere else (Settings → Playback).
 - Idle devices are listed too: pick one before anything's playing, then choose music from any device and it plays there.
+- With nothing playing on this device, the player shows whatever another device is playing ("Playing on …"), with play, pause, skip, back and scrubbing. Choose This device in Devices to stop following it.
+- Exclusions and playback preferences (autoplay, crossfade, loudness levelling, saved EQ presets and so on) are shared between your devices. The EQ curve, output device and looks stay per device.
 - Each Platter publishes its local network address to your Plex account, so devices find each other across subnets and on networks that drop multicast. Other Plex players do the same.
 - Devices exchange their state every couple of seconds over the LAN. One working direction is enough, so a firewall on one side doesn't break it, though commands to a firewalled device can take a few seconds. Without any LAN link, Platter falls back to your Plex server's list of active sessions, which also shows other Plex apps.
 - Speaks the Plex Companion protocol (HTTP on port 32500) with GDM discovery, so Plex apps can also see and control Platter.
@@ -48,9 +51,13 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 - Material design with Platter's colours, or choose Material You (wallpaper colours) or another colour scheme.
 - Gestures: swipe down to minimise Now Playing, sideways to skip, right to go back. Press and drag the seek bar to scrub; waveform, wavy or plain.
 - Android Auto with Albums, Artists and Playlists tabs and steering-wheel controls. Android Auto hides sideloaded apps until you turn on "Unknown sources" in its developer settings.
-- Every server address is saved and checked at once, so moving between home and mobile data is quick.
+- Every server address is saved and checked at once, so moving between home and mobile data is quick. If the server stops answering, Platter moves to whichever address works and carries on.
+- Pull down on any page to refresh it.
 - Android 17 asks for permission to reach devices on your local network. Without it, Platter can only reach your server through its remote addresses and can't see other devices.
 - Android 7 and newer, including older system WebViews.
+
+**Google TV / Android TV**
+- The same Android app, listed in the TV launcher, with the wide layout. Everything works with the remote's D-pad: arrows move between items, OK selects, Back goes back.
 
 **Sound**
 - Crossfade (off by default), keeping albums gapless if you want.

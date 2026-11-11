@@ -56,6 +56,23 @@ function route(p, q, req, body) {
     return mc({ Directory: [] });
   }
   if (p === "/library/sections") return mc({ Directory: [{ key: "1", title: "Music", type: "artist" }] });
+  if (p === "/accounts") return mc({ Account: [{ id: 0, name: "" }, { id: 1, name: "Test User" }, { id: 7, name: "Someone Else" }] });
+  // Plays by hour: the same few tracks at each time of day, so a daylist has a clear sound.
+  if (p === "/status/sessions/history/all") {
+    const now = Math.floor(Date.now() / 1000);
+    const plays = [...Array(400)].map((_, n) => {
+      const hoursAgo = n * 3 + (n % 5);
+      const at = now - hoursAgo * 3600;
+      const hour = new Date(at * 1000).getHours();
+      const i = (Math.floor(hour / 4) * 3 + (n % 3)) % 30;
+      return { type: "track", ratingKey: String(1000 + i), grandparentTitle: artists[i % 10], viewedAt: at, accountID: n % 9 === 0 ? 7 : 1 };
+    });
+    return mc({ size: plays.length, Metadata: plays });
+  }
+  if (/^\/library\/sections\/\d+\/(genre|style)$/.test(p)) {
+    const style = p.endsWith("style");
+    return mc({ Directory: (style ? ["Trip Hop", "IDM", "Post-Rock"] : ["Electronic", "Rock"]).map((title, i) => ({ key: String((style ? 200 : 100) + i), title })) });
+  }
   if (p === "/identity") return mc({ machineIdentifier: "mock", version: "1" });
   if (p.startsWith("/hubs/sections")) return mc({ Hub: [
     { hubIdentifier: "recent", title: "Recently added", type: "album", key: "/hubs/home/recentlyAdded?type=9", more: true, Metadata: [...Array(12)].map((_, i) => album(i)) },
@@ -96,11 +113,14 @@ function route(p, q, req, body) {
   }
   if (/\/nearest$/.test(p)) return mc({ Metadata: [...Array(12)].map((_, i) => track(i + 20)) });
   if (/\/library\/streams\/\d+\/levels/.test(p)) return mc({ Level: [...Array(140)].map((_, i) => ({ v: -30 + 20 * Math.abs(Math.sin(i / 7)) })) });
+  // Several at once: /library/metadata/1001,1002
+  const many = p.match(/^\/library\/metadata\/(\d+(?:,\d+)+)$/);
+  if (many) return mc({ Metadata: many[1].split(",").map(Number).filter((id) => id >= 1000).map((id) => track(id - 1000)) });
   const m = p.match(/^\/library\/metadata\/(\d+)(\/children|\/allLeaves)?/);
   if (m) {
     const id = +m[1];
     if (m[2]) return mc({ Metadata: id < 100 && m[2] === "/children" ? [0, 1, 2].map((i) => album(i + id - 10)) : [...Array(10)].map((_, i) => track(i)) });
-    return mc({ Metadata: [id >= 1000 ? track(id - 1000) : id >= 100 ? { ...album(id - 100), Genre: [{ tag: "Trip hop" }] } : artist(id - 10)] });
+    return mc({ Metadata: [id >= 1000 ? track(id - 1000) : id >= 100 ? { ...album(id - 100), Genre: [{ tag: id % 2 ? "Rock" : "Electronic" }], Style: [{ tag: ["Trip Hop", "IDM", "Post-Rock"][id % 3] }] } : artist(id - 10)] });
   }
   // Lidarr
   if (p === "/api/v1/rootfolder") return [{ path: "/music" }];
