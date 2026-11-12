@@ -14,6 +14,7 @@ import { initLocal } from "./local";
 import { LibraryView, PhoneBar, PhoneNav, PhoneNowPlaying, PullToRefresh, SearchView, useEdgeSwipeBack } from "./components/Phone";
 import { isAndroid, isTv, useIsPhone } from "./platform";
 import { startTvNavigation } from "./tv";
+import { startTagIndex } from "./genres";
 import { initAndroid, initBackButton } from "./backButton";
 import { startUpdateChecks } from "./updates";
 import { server, useNav, useSession, useSettings } from "./store";
@@ -300,6 +301,8 @@ function Main() {
       startConnectionMonitor();
       void initRemote();
       startUpdateChecks();
+      // Learns what every artist sounds like, slowly, for autoplay and the mixes.
+      setTimeout(() => void startTagIndex(), 30_000);
     });
     return useSession.subscribe((s, prev) => {
       if (!prev.server || s.server?.uri === prev.server.uri) return;

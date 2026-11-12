@@ -4,6 +4,7 @@
 //   Suggestions: music you haven't heard much, near what you play most. A new one each day.
 import { Track } from "./plex";
 import { similarTracks } from "./similar";
+import { Tags, artistKey, blend, blendOf, capPerArtist, leadArtist, nearestArtists, themeOf } from "./genres";
 import { isExcluded, loadJson, sectionKey, server, useSession } from "./store";
 
 export interface Mix {
@@ -67,11 +68,19 @@ async function makeDaylist(): Promise<Mix> {
   const atThisTime = history.filter((h) => partOf(new Date(h.viewedAt * 1000).getHours()) === part);
   const weighted = [...atThisTime, ...atThisTime.filter((h) => new Date(h.viewedAt * 1000).getDay() === now.getDay())];
   const pool = weighted.length >= 10 ? weighted : history;
-  const favourites = await server().tracks(ranked(pool.map((h) => h.ratingKey)).slice(0, 30));
-  const picked = shuffle(favourites.filter((t) => !isExcluded(t))).slice(0, 15);
-  const fresh = picked.length ? await similarTracks(picked, new Set(picked.map((t) => t.ratingKey)), 25) : [];
-  const tracks = shuffle([...picked, ...fresh]);
-  const sound = await soundOf(picked);
+  // The sound you play most at this time: one theme, not a bit of everything.
+  const plays = new Map<string, number>();
+  for (const h of pool) plays.set(artistKey(h.artist), (plays.get(artistKey(h.artist)) ?? 0) + 1);
+  const top = ranked(pool.map((h) => h.artist)).slice(0, 12);
+  const each: Tags[] = await Promise.all(top.map((a) => blendOf([a]).catch((): Tags => ({}))));
+  const theme = themeOf(blend(each.map((tags, i) => ({ tags, weight: plays.get(artistKey(top[i])) ?? 1 }))));
+  const inTheme = new Set(top.filter((_, i) => theme && (each[i][theme] ?? 0) >= 0.3).map(artistKey));
+  const themed = inTheme.size ? pool.filter((h) => inTheme.has(artistKey(h.artist))) : pool;
+  const favourites = await server().tracks(ranked(themed.map((h) => h.ratingKey)).slice(0, 30));
+  const picked = capPerArtist(shuffle(favourites.filter((t) => !isExcluded(t))), 3).slice(0, 15);
+  const fresh = picked.length ? await similarTracks(picked, new Set(picked.map((t) => t.ratingKey)), 30) : [];
+  const tracks = shuffle(capPerArtist([...picked, ...fresh], 4)).slice(0, 40);
+  const sound = theme || (await soundOf(picked));
   return {
     id: "daylist",
     title: `${sound ? `${titleCase(sound)} ` : ""}${DAYS[now.getDay()]} ${part}`,
@@ -84,7 +93,29 @@ async function makeDaylist(): Promise<Mix> {
 async function makeSuggestions(): Promise<Mix> {
   const history = await myHistory();
   const heard = new Set(history.map((h) => h.ratingKey));
-  // Seeds: a spread of tracks by the artists you play most.
+  // Artists that sound like your favourites but that you've hardly played.
+  const counts = new Map<string, number>();
+  for (const h of history) counts.set(artistKey(h.artist), (counts.get(artistKey(h.artist)) ?? 0) + 1);
+  const favourites = ranked(history.map((h) => h.artist)).slice(0, 10);
+  const target = await blendOf(favourites, favourites.map((a) => counts.get(artistKey(a)) ?? 1)).catch((): Tags => ({}));
+  const familiarArtists = new Set([...counts.entries()].filter(([, n]) => n >= 3).map(([a]) => a));
+  const familiarLeads = new Set([...familiarArtists].map(leadArtist));
+  const near = Object.keys(target).length ? await nearestArtists(target, 25, familiarArtists).catch(() => []) : [];
+  const discovered: Track[] = [];
+  const leads = new Map<string, number>();
+  for (const a of near) {
+    // "Hermitude & IsGwan" is still Hermitude: not new to you, and not twelve times over.
+    const lead = leadArtist(a.name);
+    if (familiarLeads.has(lead) || (leads.get(lead) ?? 0) >= 2) continue;
+    leads.set(lead, (leads.get(lead) ?? 0) + 2);
+    const t = await server().randomTracks(sectionKey(), 4, { "artist.id": a.key }).catch(() => [] as Track[]);
+    discovered.push(...t.filter((x) => !heard.has(x.ratingKey) && !isExcluded(x)).slice(0, 2));
+    if (discovered.length >= 30) break;
+  }
+  if (discovered.length >= 15) {
+    return { id: "suggestions", title: "Suggestions", subtitle: "New to you, based on what you play most", tracks: shuffle(discovered).slice(0, 30), period: periodOf("suggestions") };
+  }
+  // Not enough tag data yet: fall back to similar tracks around your favourites.
   const topArtists = new Set(ranked(history.map((h) => h.artist)).slice(0, 10));
   const seedKeys = shuffle(ranked(history.filter((h) => topArtists.has(h.artist)).map((h) => h.ratingKey)).slice(0, 40)).slice(0, 12);
   const seeds = await server().tracks(seedKeys);

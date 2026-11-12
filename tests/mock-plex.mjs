@@ -145,8 +145,28 @@ http
     req.on("end", () => {
       res.setHeader("Access-Control-Allow-Origin", "*");
       const part = p.match(/^\/library\/parts\/(\d+)\//);
-      if (part) {
-        const f = 180 + (+part[1] % 10) * 40;
+      // A file the player can't read (MOCK_BROKEN=1005,1007), to test the converted-copy fallback.
+      if (part && (process.env.MOCK_BROKEN ?? "").split(",").includes(part[1])) {
+        console.log(`BROKEN ${p}`);
+        res.writeHead(200, { "Content-Type": "audio/flac", "Content-Length": 4096 });
+        return res.end(Buffer.alloc(4096, 0x5a));
+      }
+      // Plex's converted copy: the same tone stands in for the MP3.
+      const converted = p.startsWith("/music/:/transcode/universal/start") && url.searchParams.get("path")?.match(/(\d+)$/);
+      if (converted) console.log(`TRANSCODE ${converted[1]}`);
+      // A 24-bit, 48 kHz file (MOCK_HIRES=1002), for testing hi-res output.
+      if (part && (process.env.MOCK_HIRES ?? "").split(",").includes(part[1])) {
+        const rate = 48000, n = rate * SECONDS, d = Buffer.alloc(44 + n * 3);
+        d.write("RIFF", 0); d.writeUInt32LE(36 + n * 3, 4); d.write("WAVEfmt ", 8); d.writeUInt32LE(16, 16); d.writeUInt16LE(1, 20); d.writeUInt16LE(1, 22);
+        d.writeUInt32LE(rate, 24); d.writeUInt32LE(rate * 3, 28); d.writeUInt16LE(3, 32); d.writeUInt16LE(24, 34); d.write("data", 36); d.writeUInt32LE(n * 3, 40);
+        for (let i = 0; i < n; i++) d.writeIntLE(Math.round(Math.sin((2 * Math.PI * 330 * i) / rate) * 800000), 44 + i * 3, 3);
+        const range = /bytes=(\d+)-(\d*)/.exec(req.headers.range ?? "");
+        const start = range ? +range[1] : 0, end = range && range[2] ? +range[2] : d.length - 1;
+        res.writeHead(range ? 206 : 200, { "Content-Type": "audio/wav", "Accept-Ranges": "bytes", "Content-Length": end - start + 1, ...(range ? { "Content-Range": `bytes ${start}-${end}/${d.length}` } : {}) });
+        return res.end(d.subarray(start, end + 1));
+      }
+      if (part || converted) {
+        const f = 180 + (+(part ?? converted)[1] % 10) * 40;
         if (!tones.has(f)) tones.set(f, tone(f));
         const data = tones.get(f);
         const range = /bytes=(\d+)-(\d*)/.exec(req.headers.range ?? "");

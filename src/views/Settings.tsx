@@ -12,6 +12,7 @@ import { TrackList } from "../components/common";
 import { QueueList } from "../components/Panels";
 import { measureFrameRate } from "../smooth";
 import { deviceName } from "../remote";
+import { refreshLibrary, useLibrary } from "../live";
 import { isAndroid, isPhone } from "../platform";
 import { getVersion } from "@tauri-apps/api/app";
 import { checkForUpdates, installUpdate, useUpdates } from "../updates";
@@ -65,6 +66,18 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
       </div>
       <div className="set-control">{children}</div>
     </div>
+  );
+}
+
+/** Asks Plex to look through the library's folders for new and changed music. */
+function ScanRow() {
+  const scanning = useLibrary((s) => s.scanning);
+  return (
+    <Row label="Scan library" hint={scanning ? "Plex is scanning your music folders…" : "Look for music added or changed on the server since its last scan"}>
+      <button className="btn" disabled={scanning} onClick={() => void refreshLibrary(true)}>
+        <RefreshCw size={15} className={scanning ? "spin" : ""} /> {scanning ? "Scanning…" : "Scan now"}
+      </button>
+    </Row>
   );
 }
 
@@ -457,6 +470,7 @@ export function SettingsView() {
             Change
           </button>
         </Row>
+        <ScanRow />
       </section>
 
       <section className="set-group">
@@ -504,6 +518,14 @@ export function SettingsView() {
           <Toggle k="smartShuffle" />
         </Row>
         <Exclusions />
+        {android && (
+          <Row
+            label="Bit-perfect output"
+            hint="Hands hi-res audio to your player or DAP untouched, at full 24-bit precision. Turns off the EQ, loudness levelling, crossfade and speed, which would change it. Keep Platter's volume at 100% and use the device's own."
+          >
+            <Toggle k="bitPerfect" />
+          </Row>
+        )}
         <Row label="Transcoding" hint="Lower bitrate for slow or metered connections">
           <div className="row gap">
             <Select k="transcode" options={[["never", "Never (original quality)"], ["remote", "Only when remote"], ["always", "Always"]]} />

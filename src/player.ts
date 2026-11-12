@@ -11,7 +11,7 @@ import { Track, toTrack } from "./plex";
 import { isAndroid } from "./platform";
 import { similarTracks } from "./similar";
 import { localMatch } from "./local";
-import { ensureConnection } from "./connection";
+import { connectionKind, ensureConnection } from "./connection";
 import { EQ_BANDS, fmtTime, isExcluded, loadJson, persist, sectionKey, server, toast, useSession, useSettings } from "./store";
 
 export interface QItem {
@@ -107,10 +107,17 @@ const session = crypto.randomUUID();
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 const items = (tracks: Track[]): QItem[] => tracks.map((track) => ({ uid: uid(), track }));
 
-function wantsTranscode() {
+/** Tracks that wouldn't play as they are, so stream a copy converted by Plex instead. */
+const converted = new Set<string>();
+
+function wantsTranscode(t: Track) {
   const s = useSettings.getState();
   if (s.transcode === "always") return s.transcodeKbps;
-  if (s.transcode === "remote" && !useSession.getState().server?.local) return s.transcodeKbps;
+  const info = useSession.getState().server;
+  if (s.transcode === "remote" && !info?.local) return s.transcodeKbps;
+  if (converted.has(t.ratingKey)) return 320;
+  // Plex's relay carries about 2 Mbps; hi-res files stall on it, so they're converted, as Plexamp does.
+  if (info && connectionKind(info) === "Plex relay" && (t.bitrate ?? 0) > 1800) return 320;
   return null;
 }
 
@@ -118,7 +125,7 @@ function wantsTranscode() {
 function urlFor(t: Track) {
   const file = localMatch(t)?.local;
   if (file) return isAndroid() ? "file://" + file.split("/").map(encodeURIComponent).join("/") : file;
-  const u = new URL(server().streamUrl(t, wantsTranscode(), session));
+  const u = new URL(server().streamUrl(t, wantsTranscode(t), session));
   u.searchParams.set("_n", String(++urlSeq));
   return u.toString();
 }
@@ -224,7 +231,7 @@ let fadeStarting = false;
 
 function maybeCrossfade(b: BackendState) {
   const s = useSettings.getState();
-  if (!s.crossfade || b.paused || b.idle || b.buffering || !b.duration) return;
+  if (!s.crossfade || s.bitPerfect || b.paused || b.idle || b.buffering || !b.duration) return;
   const { queue, index, repeat } = get();
   const cur = queue[index];
   if (!cur || fadeOut === cur.uid || repeat === "one") return;
@@ -283,7 +290,7 @@ async function plexGain(t: Track) {
 async function applyGain(t: Track) {
   const s = useSettings.getState();
   const mode = s.replaygain;
-  if (mode === "no" || mode === "dynamic") {
+  if (mode === "no" || mode === "dynamic" || s.bitPerfect) {
     void setProp("volume-gain", 0);
     return;
   }
@@ -427,12 +434,23 @@ let lastRecovery = 0;
 async function onPlaybackError(msg: string) {
   const t = currentTrack();
   const { position, paused, index, loaded } = get();
-  if (loaded && t && !localMatch(t) && Date.now() - lastRecovery > 20_000) {
-    lastRecovery = Date.now();
-    await ensureConnection();
-    return load(index, position, paused);
+  console.warn("playback error", msg, t?.ratingKey);
+  if (loaded && t && !localMatch(t)) {
+    if (Date.now() - lastRecovery > 20_000) {
+      lastRecovery = Date.now();
+      await ensureConnection();
+      return load(index, position, paused);
+    }
+    // Still failing on a good connection: this file is the problem. Plex can convert it.
+    if (!converted.has(t.ratingKey) && wantsTranscode(t) === null) {
+      converted.add(t.ratingKey);
+      toast(`Couldn't play “${t.title}” as it is, so playing a converted copy`);
+      return load(index, position, paused);
+    }
   }
   toast(`${msg}${t ? `: ${t.title}` : ""}`, { error: true });
+  // Carry on with the rest rather than stopping.
+  if (t && index < get().queue.length - 1) void player.next();
 }
 
 function onFile(path: string) {
@@ -718,18 +736,19 @@ function eqFilter() {
 
 function applySettings(s = useSettings.getState(), p?: ReturnType<typeof useSettings.getState>) {
   if (!p || s.gapless !== p.gapless) void setProp("gapless-audio", s.gapless ? "weak" : "no");
-  if (!p || s.replaygain !== p.replaygain) {
+  if (!p || s.replaygain !== p.replaygain || s.bitPerfect !== p.bitPerfect) {
     void setProp("replaygain", s.replaygain === "dynamic" ? "no" : s.replaygain);
     const t = currentTrack();
     if (p && t && get().loaded) void applyGain(t);
   }
   if (!p || s.replaygainPreamp !== p.replaygainPreamp) void setProp("replaygain-preamp", s.replaygainPreamp);
   if (!p || s.audioDevice !== p.audioDevice) void setProp("audio-device", s.audioDevice);
-  if (!p || s.speed !== p.speed) void setProp("speed", s.speed);
-  if (!p || s.eqEnabled !== p.eqEnabled || s.eqGains !== p.eqGains || s.eqPreamp !== p.eqPreamp || s.replaygain !== p.replaygain) {
+  if (!p || s.speed !== p.speed || s.bitPerfect !== p.bitPerfect) void setProp("speed", s.bitPerfect ? 1 : s.speed);
+  if (isAndroid() && (!p || s.bitPerfect !== p.bitPerfect)) void setProp("bit-perfect", s.bitPerfect);
+  if (!p || s.eqEnabled !== p.eqEnabled || s.eqGains !== p.eqGains || s.eqPreamp !== p.eqPreamp || s.replaygain !== p.replaygain || s.bitPerfect !== p.bitPerfect) {
     void setProp("af", eqFilter());
     // Android applies the bands through the system equaliser instead.
-    if (isAndroid()) void setProp("eq", JSON.stringify(s.eqEnabled ? { preamp: s.eqPreamp, bands: EQ_BANDS.map((hz, i) => [hz, s.eqGains[i] ?? 0]) } : null));
+    if (isAndroid()) void setProp("eq", JSON.stringify(s.eqEnabled && !s.bitPerfect ? { preamp: s.eqPreamp, bands: EQ_BANDS.map((hz, i) => [hz, s.eqGains[i] ?? 0]) } : null));
   }
   if (!p || s.closeToTray !== p.closeToTray) invoke("set_close_to_tray", { enabled: s.closeToTray }).catch(() => undefined);
 }

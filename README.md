@@ -28,10 +28,10 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 - Reports playback to Plex (Now Playing, play counts, *Recently played*) and saves your position. Long tracks resume where any Plex player left off.
 - On launch, offers to carry on with whatever you last played on another device
 - Loves and ratings sync both ways. Playlists can be created, edited and reordered.
-- **Live library updates** through the server's notification socket, plus a refresh button (F5) that can also start a library scan (Shift+F5)
+- **Live library updates** through the server's notification socket, plus a refresh button (F5), and a library scan from Settings → Scan library (or Shift+F5)
 
 **Autoplay and mixes**
-- When the queue runs out, Platter keeps going with similar music. It uses Plex's sonic analysis when available, then tracks by the same and similar artists, then albums in the same styles and genres. Random tracks are only a last resort. Turn it off in Settings → Playback.
+- When the queue runs out, Platter keeps going with similar music. It uses Plex's sonic analysis when available, then artists with a similar sound (from MusicBrainz genre tags, learnt in the background), then Plex's similar artists, then albums in the same styles and genres. Random tracks are only a last resort. Turn it off in Settings → Playback.
 - **Made for you** on Home: a **daylist** built from what you play at this time of day, renamed and remade through the day, and **Suggestions**: music you haven't heard much, near what you play most, remade daily.
 
 **Devices (like Spotify Connect)**
@@ -54,6 +54,8 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 - Every server address is saved and checked at once, so moving between home and mobile data is quick. If the server stops answering, Platter moves to whichever address works and carries on.
 - Pull down on any page to refresh it.
 - Android 17 asks for permission to reach devices on your local network. Without it, Platter can only reach your server through its remote addresses and can't see other devices.
+- **Bit-perfect output** (Settings → Playback) for DAPs and hi-res DACs: 24-bit audio reaches the system untouched instead of being rounded to 16-bit, with the EQ, loudness levelling, crossfade and speed turned off.
+- A track that won't play as it is falls back to a copy converted by Plex. Hi-res files are converted on Plex's relay, which can't carry them.
 - Android 7 and newer, including older system WebViews.
 
 **Google TV / Android TV**

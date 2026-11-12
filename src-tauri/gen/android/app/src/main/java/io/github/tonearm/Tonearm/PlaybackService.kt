@@ -9,6 +9,7 @@ import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
@@ -30,17 +31,26 @@ class PlaybackService : MediaLibraryService() {
     var nativeQueue = false
     var volume = 1f
     var muted = false
+    /** Keep 24-bit audio intact: decoders hand over 32-bit float instead of rounding to 16-bit. */
+    var bitPerfect = false
+    /** What the current player was built with; a new one is needed when [bitPerfect] changes. */
+    var builtBitPerfect = false
 
     private val attributes =
       AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build()
 
     @OptIn(UnstableApi::class)
-    fun newPlayer(context: Context, handleFocus: Boolean = true): ExoPlayer =
-      ExoPlayer.Builder(context.applicationContext)
+    fun newPlayer(context: Context, handleFocus: Boolean = true): ExoPlayer {
+      builtBitPerfect = bitPerfect
+      val renderers = DefaultRenderersFactory(context.applicationContext)
+        .setEnableAudioFloatOutput(bitPerfect)
+        .setEnableAudioTrackPlaybackParams(true)
+      return ExoPlayer.Builder(context.applicationContext, renderers)
         .setAudioAttributes(attributes, handleFocus)
         .setHandleAudioBecomingNoisy(true)
         .setWakeMode(C.WAKE_MODE_NETWORK)
         .build()
+    }
 
     fun player(context: Context): ExoPlayer = exo ?: newPlayer(context).also { exo = it }
 

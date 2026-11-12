@@ -84,6 +84,8 @@ export interface Settings {
   speed: number;
   transcode: "never" | "remote" | "always";
   transcodeKbps: number;
+  /** Android: hand 24-bit audio over untouched, with nothing that alters it (EQ, levelling, crossfade). */
+  bitPerfect: boolean;
   eqEnabled: boolean;
   eqGains: number[];
   eqPreamp: number;
@@ -141,6 +143,7 @@ const defaultSettings: Settings = {
   audioDevice: "auto",
   speed: 1,
   transcode: "never",
+  bitPerfect: false,
   transcodeKbps: 320,
   eqEnabled: false,
   eqGains: [...EQ_PRESETS.Flat],

@@ -235,7 +235,10 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     override fun onAudioSessionIdChanged(audioSessionId: Int) = applyEffects()
 
     override fun onPlayerError(error: PlaybackException) {
-      emit("error", JSONObject.quote(error.message ?: "playback error"))
+      // "Source error" alone says nothing; the code and cause say what actually went wrong.
+      val cause = error.cause?.let { c -> c.message?.takeIf { it.isNotBlank() } ?: c.javaClass.simpleName }
+      val detail = listOfNotNull(error.errorCodeName.removePrefix("ERROR_CODE_"), cause).joinToString(": ")
+      emit("error", JSONObject.quote("${error.message ?: "Playback error"} ($detail)"))
     }
   }
 
@@ -281,7 +284,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         enhancer = null
         effectsSession = session
       }
-      val cfg = eqConfig
+      val cfg = eqConfig.takeUnless { PlaybackService.bitPerfect }
       if (cfg == null) {
         equalizer?.enabled = false
       } else {
@@ -306,6 +309,10 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         }
         eq.enabled = true
       }
+      if (PlaybackService.bitPerfect) {
+        enhancer?.enabled = false
+        return
+      }
       val le = enhancer ?: if (gainDb > 0) LoudnessEnhancer(session).also { enhancer = it } else null
       le?.setTargetGain(((if (gainDb > 0) gainDb else 0.0) * 100).toInt())
       le?.enabled = gainDb > 0
@@ -317,7 +324,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
   /** ExoPlayer can only turn down, so cuts go through volume and boosts through the enhancer. */
   private fun applyVolume(fade: Float = 1f) {
     val base = if (PlaybackService.muted) 0f else PlaybackService.volume
-    val cut = if (gainDb < 0) Math.pow(10.0, gainDb / 20.0).toFloat() else 1f
+    val cut = if (gainDb < 0 && !PlaybackService.bitPerfect) Math.pow(10.0, gainDb / 20.0).toFloat() else 1f
     player.volume = base * cut * fade
   }
 
@@ -373,6 +380,17 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         }
       })
     }
+  }
+
+  /** A fresh player built for the current output mode, in place of the old one. */
+  private fun rebuildPlayer() {
+    val old = player
+    val fresh = PlaybackService.newPlayer(activity.applicationContext)
+    old.removeListener(listener)
+    PlaybackService.swapPlayer(fresh)
+    attach(fresh)
+    old.release()
+    applyEffects()
   }
 
   private fun ExoPlayer.clearMediaItems(keepCurrent: Boolean) {
@@ -529,6 +547,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     onMain(invoke) {
       cancelFade()
       PlaybackService.nativeQueue = false
+      if (PlaybackService.builtBitPerfect != PlaybackService.bitPerfect) rebuildPlayer()
       val p = player
       val items = mutableListOf(item(args.url))
       args.next?.let { items.add(item(it)) }
@@ -591,6 +610,13 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         "eq" -> {
           eqConfig = runCatching { JSONObject(args.value) }.getOrNull()
           applyEffects()
+        }
+        "bit-perfect" -> {
+          PlaybackService.bitPerfect = args.value == "yes"
+          // Takes effect straight away unless something's playing; otherwise from the next track.
+          if (PlaybackService.builtBitPerfect != PlaybackService.bitPerfect && !p.isPlaying) rebuildPlayer()
+          applyEffects()
+          applyVolume()
         }
         "speed" -> p.playbackParameters = PlaybackParameters(args.value.toFloatOrNull() ?: 1f)
         "loop-file" -> p.repeatMode = if (args.value == "inf") Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF

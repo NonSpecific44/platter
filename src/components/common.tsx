@@ -285,7 +285,7 @@ export function TrackList({ tracks, showAlbum, showArtist = "auto", showCover, n
     rows.push(
       <div
         key={`${t.ratingKey}-${i}`}
-        className={`track ${isCur ? "current" : ""} ${selected.has(i) ? "selected" : ""}`}
+        className={`track ${showAlbum ? "with-album" : ""} ${showCover ? "with-cover" : ""} ${isCur ? "current" : ""} ${selected.has(i) ? "selected" : ""}`}
         onClick={(e) => (isAndroid() ? player.playTracks(tracks, i) : select(i, e))}
         onDoubleClick={() => player.playTracks(tracks, i)}
         onContextMenu={(e) => {

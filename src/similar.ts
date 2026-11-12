@@ -1,6 +1,7 @@
 // "More like this" for Autoplay: what to play once the queue runs out.
 import { Album, Track } from "./plex";
 import { isExcluded, sectionKey, server } from "./store";
+import { blendOf, leadArtist, nearestArtists } from "./genres";
 
 /** Reorders so the same artist rarely plays twice in a row. */
 function spread(tracks: Track[]) {
@@ -72,8 +73,9 @@ async function seedTags(seeds: Track[]) {
 
 /**
  * Tracks similar to `seeds`, best sources first: Plex's sonic analysis (nearest neighbours), then
- * tracks by the seeds' artists and their similar artists, then albums sharing the seeds' styles and
- * genres. Random tracks from the whole library are only a last resort.
+ * artists that sound like the seeds' (genre tags, see genres.ts), then Plex's similar artists, then
+ * albums sharing the seeds' styles and genres. Random tracks from the whole library are only a
+ * last resort.
  */
 export async function similarTracks(seeds: Track[], exclude: Set<string>, count: number): Promise<Track[]> {
   const s = server();
@@ -84,9 +86,10 @@ export async function similarTracks(seeds: Track[], exclude: Set<string>, count:
   const add = (tracks: Track[], cap = 4) => {
     for (const t of tracks) {
       if (found.size >= count * 2 || exclude.has(t.ratingKey) || isExcluded(t) || found.has(t.ratingKey)) continue;
-      const n = perArtist.get(t.artist) ?? 0;
+      const lead = leadArtist(t.artist);
+      const n = perArtist.get(lead) ?? 0;
       if (n >= cap) continue;
-      perArtist.set(t.artist, n + 1);
+      perArtist.set(lead, n + 1);
       found.set(t.ratingKey, t);
     }
   };
@@ -95,6 +98,17 @@ export async function similarTracks(seeds: Track[], exclude: Set<string>, count:
     seedTags(seeds).catch(() => ({ styles: [] as string[], genres: [] as string[] })),
     ...seeds.slice(-3).map((t) => s.nearest(t.ratingKey, 30).then(add, () => undefined)),
   ]);
+
+  if (found.size < count) {
+    // Artists in the same sound, closest first, the seeds' own included.
+    const names = [...new Set(seeds.map((t) => t.artist))].slice(-3);
+    const target = await blendOf(names).catch((): Record<string, number> => ({}));
+    if (Object.keys(target).length) {
+      const near = await nearestArtists(target, 10).catch(() => []);
+      const tracks = await Promise.all(near.map((a) => s.randomTracks(sec, 3, { "artist.id": a.key }).catch(() => [])));
+      for (const t of tracks) add(t, 3);
+    }
+  }
 
   if (found.size < count) {
     const artistKeys = [...new Set(seeds.map((t) => t.artistKey).filter((k): k is string => !!k))].slice(-2);
