@@ -6,6 +6,8 @@ import { Track } from "./plex";
 import { similarTracks } from "./similar";
 import { Tags, artistKey, blend, blendOf, capPerArtist, leadArtist, nearestArtists, themeOf } from "./genres";
 import { isExcluded, loadJson, sectionKey, server, useSession } from "./store";
+import { invoke } from "@tauri-apps/api/core";
+import { isAndroid } from "./platform";
 
 export interface Mix {
   id: "daylist" | "suggestions";
@@ -153,12 +155,29 @@ export function getMix(id: Mix["id"], fresh = false): Promise<Mix> {
         } catch {
           /* still shown, just made again next time */
         }
+        shareWithAuto();
         return mix;
       })
       .finally(() => making.delete(id));
     making.set(id, p);
   }
   return p;
+}
+
+/** Hands the latest mixes to Android Auto, which can't make them itself (it runs without the app). */
+export function shareWithAuto() {
+  if (!isAndroid()) return;
+  const list = (["daylist", "suggestions"] as const)
+    .map((id) => savedMix(id))
+    .filter((m): m is Mix => !!m?.tracks.length)
+    .map((m) => ({
+      id: m.id,
+      label: m.id === "daylist" ? "daylist" : "Suggestions",
+      title: m.title === "Suggestions" ? m.subtitle : m.title,
+      thumb: m.tracks[0]?.thumb ?? "",
+      keys: m.tracks.filter((t) => !t.ratingKey.startsWith("local")).map((t) => t.ratingKey),
+    }));
+  void invoke("auto_mixes", { json: JSON.stringify(list) }).catch(() => undefined);
 }
 
 /** The last one made, for showing a card straight away. */

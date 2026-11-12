@@ -468,6 +468,13 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   @Command
+  fun autoMixes(invoke: Invoke) {
+    val args = invoke.parseArgs(ConfigArgs::class.java)
+    AutoLibrary.saveMixes(activity.applicationContext, args.json)
+    invoke.resolve()
+  }
+
+  @Command
   fun autoConfig(invoke: Invoke) {
     val args = invoke.parseArgs(ConfigArgs::class.java)
     AutoLibrary.saveConfig(activity.applicationContext, args.json)

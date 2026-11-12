@@ -120,6 +120,12 @@ fn auto_config(n: State<Native>, json: String) -> Result<(), String> {
     call(&n, "autoConfig", json!({ "json": json })).map(|_| ())
 }
 
+/// The app's mixes, for Android Auto's "For you" tab.
+#[tauri::command]
+fn auto_mixes(n: State<Native>, json: String) -> Result<(), String> {
+    call(&n, "autoMixes", json!({ "json": json })).map(|_| ())
+}
+
 #[tauri::command]
 fn dynamic_colors(n: State<Native>) -> Result<Value, String> {
     call(&n, "dynamicColors", json!({}))
@@ -170,6 +176,7 @@ pub fn run() {
             player_take_over,
             app_background,
             auto_config,
+            auto_mixes,
             system_bars,
             dynamic_colors,
             local_pick_folder,

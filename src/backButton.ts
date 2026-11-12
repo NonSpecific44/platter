@@ -7,6 +7,7 @@ import { useMenu, useNav, useSession } from "./store";
 import { useDevicesSheet } from "./components/Devices";
 import { useMetadataEditor, usePrompt } from "./actions";
 import { ensureConnection } from "./connection";
+import { shareWithAuto } from "./mixes";
 import { clientId } from "./plex";
 import { setOutputName, discover } from "./remote";
 
@@ -79,5 +80,7 @@ export function initAndroid() {
     }).catch(() => undefined);
   };
   push();
+  // Android Auto shows the last mixes made, even before Home has opened this time.
+  shareWithAuto();
   useSession.subscribe((s, p) => (s.server !== p.server || s.section !== p.section) && push());
 }

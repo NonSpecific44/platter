@@ -43,6 +43,11 @@ class AutoLibrary(private val context: Context) : MediaLibrarySession.Callback {
     fun saveConfig(context: Context, json: String) {
       context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("config", json).apply()
     }
+
+    /** The app's Made for you mixes (daylist, Suggestions): titles and track keys. */
+    fun saveMixes(context: Context, json: String) {
+      context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("mixes", json).apply()
+    }
   }
 
   private class Config(json: JSONObject) {
@@ -54,6 +59,13 @@ class AutoLibrary(private val context: Context) : MediaLibrarySession.Callback {
       val all = json.optJSONArray("uris") ?: JSONArray()
       for (i in 0 until all.length()) if (all.getString(i) !in this) add(all.getString(i))
     }
+  }
+
+  /** The mixes the app last made, in its order. Made in the app, which knows your listening. */
+  private fun mixes(): List<JSONObject> {
+    val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("mixes", null) ?: return emptyList()
+    val list = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
+    return (0 until list.length()).map { list.getJSONObject(it) }.filter { (it.optJSONArray("keys")?.length() ?: 0) > 0 }
   }
 
   private fun config(): Config? =
@@ -97,7 +109,7 @@ class AutoLibrary(private val context: Context) : MediaLibrarySession.Callback {
     return Uri.parse("$base/photo/:/transcode?width=512&height=512&minSize=1&upscale=1&url=$q&X-Plex-Token=${cfg.token}")
   }
 
-  private fun folder(id: String, title: String, subtitle: String? = null, art: Uri? = null, type: Int = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED): MediaItem =
+  private fun folder(id: String, title: String, subtitle: String? = null, art: Uri? = null, type: Int = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, playable: Boolean = false): MediaItem =
     MediaItem.Builder()
       .setMediaId(id)
       .setMediaMetadata(
@@ -106,7 +118,7 @@ class AutoLibrary(private val context: Context) : MediaLibrarySession.Callback {
           .setSubtitle(subtitle)
           .setArtworkUri(art)
           .setIsBrowsable(true)
-          .setIsPlayable(false)
+          .setIsPlayable(playable)
           .setMediaType(type)
           .build(),
       )
@@ -137,13 +149,28 @@ class AutoLibrary(private val context: Context) : MediaLibrarySession.Callback {
   }
 
   private fun tracksOf(cfg: Config, id: String): List<MediaItem> {
+    if (id.startsWith("mix:")) return mixTracks(cfg, id)
     val path = if (id.startsWith("playlist:")) "/playlists/${id.substringAfter(':')}/items" else "/library/metadata/${id.substringAfter(':')}/children"
     return metadata(get(cfg, path)).map { track(cfg, it, id) }
+  }
+
+  /** A mix's tracks, in the mix's order, fetched 50 at a time. */
+  private fun mixTracks(cfg: Config, id: String): List<MediaItem> {
+    val mix = mixes().firstOrNull { "mix:${it.getString("id")}" == id } ?: return emptyList()
+    val keys = mix.getJSONArray("keys").let { k -> (0 until k.length()).map { k.getString(it) } }
+    val found = keys.chunked(50).flatMap { metadata(get(cfg, "/library/metadata/${it.joinToString(",")}")) }
+    val byKey = found.associateBy { it.getString("ratingKey") }
+    return keys.mapNotNull { byKey[it] }.map { track(cfg, it, id) }
   }
 
   private fun children(cfg: Config, id: String, page: Int, pageSize: Int): List<MediaItem> {
     val paging = "X-Plex-Container-Start=${page * pageSize}&X-Plex-Container-Size=$pageSize"
     return when {
+      id == "mixes" ->
+        if (page > 0) emptyList()
+        else mixes().map {
+          folder("mix:${it.getString("id")}", it.optString("label"), it.optString("title"), artwork(cfg, it.optString("thumb")), MediaMetadata.MEDIA_TYPE_PLAYLIST, playable = true)
+        }
       id == "albums" ->
         metadata(get(cfg, "/library/sections/${cfg.section}/all?type=9&sort=addedAt:desc&$paging")).map {
           folder("album:${it.getString("ratingKey")}", it.optString("title"), it.optString("parentTitle"), artwork(cfg, it.optString("thumb")), MediaMetadata.MEDIA_TYPE_ALBUM)
@@ -160,7 +187,7 @@ class AutoLibrary(private val context: Context) : MediaLibrarySession.Callback {
         metadata(get(cfg, "/library/metadata/${id.substringAfter(':')}/children?excludeAllLeaves=1")).map {
           folder("album:${it.getString("ratingKey")}", it.optString("title"), it.optString("year"), artwork(cfg, it.optString("thumb")), MediaMetadata.MEDIA_TYPE_ALBUM)
         }
-      id.startsWith("album:") || id.startsWith("playlist:") -> tracksOf(cfg, id)
+      id.startsWith("album:") || id.startsWith("playlist:") || id.startsWith("mix:") -> tracksOf(cfg, id)
       else -> emptyList()
     }
   }
@@ -176,8 +203,10 @@ class AutoLibrary(private val context: Context) : MediaLibrarySession.Callback {
   override fun onGetChildren(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, parentId: String, page: Int, pageSize: Int, params: LibraryParams?): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
     if (parentId == ROOT) {
       // Android Auto shows the top level as tabs.
-      val tabs = ImmutableList.of(folder("albums", "Albums"), folder("artists", "Artists"), folder("playlists", "Playlists"))
-      return Futures.immediateFuture(LibraryResult.ofItemList(if (page == 0) tabs else ImmutableList.of(), params))
+      val tabs = ImmutableList.builder<MediaItem>()
+      if (mixes().isNotEmpty()) tabs.add(folder("mixes", "For you"))
+      tabs.add(folder("albums", "Albums"), folder("artists", "Artists"), folder("playlists", "Playlists"))
+      return Futures.immediateFuture(LibraryResult.ofItemList(if (page == 0) tabs.build() else ImmutableList.of(), params))
     }
     return background {
       val cfg = config() ?: return@background LibraryResult.ofError(LibraryResult.RESULT_ERROR_SESSION_AUTHENTICATION_EXPIRED)
@@ -209,7 +238,7 @@ class AutoLibrary(private val context: Context) : MediaLibrarySession.Callback {
       }
     }
 
-  /** Tapping a track plays its whole album or playlist, starting there. */
+  /** Tapping a track plays its whole album, playlist or mix, starting there; tapping a mix plays it all. */
   override fun onSetMediaItems(mediaSession: MediaSession, controller: MediaSession.ControllerInfo, mediaItems: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
     // The app's own controller only binds the service; it never sets items through here.
     return background {
@@ -218,7 +247,7 @@ class AutoLibrary(private val context: Context) : MediaLibrarySession.Callback {
       val first = mediaItems.firstOrNull()
       val id = first?.mediaId.orEmpty()
       val from = if (id.startsWith("track:")) id.split(":", limit = 3).getOrNull(2).orEmpty() else id
-      if (cfg != null && (from.startsWith("album:") || from.startsWith("playlist:"))) {
+      if (cfg != null && (from.startsWith("album:") || from.startsWith("playlist:") || from.startsWith("mix:"))) {
         try {
           val all = tracksOf(cfg, from)
           val at = all.indexOfFirst { it.mediaId == id }.coerceAtLeast(0)

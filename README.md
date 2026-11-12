@@ -50,7 +50,7 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 - Home, Search and Your Library tabs, a mini player, full-screen Now Playing, and bottom-sheet menus.
 - Material design with Platter's colours, or choose Material You (wallpaper colours) or another colour scheme.
 - Gestures: swipe down to minimise Now Playing, sideways to skip, right to go back. Press and drag the seek bar to scrub; waveform, wavy or plain.
-- Android Auto with Albums, Artists and Playlists tabs and steering-wheel controls. Android Auto hides sideloaded apps until you turn on "Unknown sources" in its developer settings.
+- Android Auto with For you (your daylist and Suggestions), Albums, Artists and Playlists tabs and steering-wheel controls. Android Auto hides sideloaded apps until you turn on "Unknown sources" in its developer settings.
 - Every server address is saved and checked at once, so moving between home and mobile data is quick. If the server stops answering, Platter moves to whichever address works and carries on.
 - Pull down on any page to refresh it.
 - Android 17 asks for permission to reach devices on your local network. Without it, Platter can only reach your server through its remote addresses and can't see other devices.
