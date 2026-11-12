@@ -1,3 +1,5 @@
 include ':app'
+// FFmpeg's audio decoders (see ffmpeg-decoder/build.gradle.kts).
+include ':ffmpeg-decoder'
 
 apply from: 'tauri.settings.gradle'

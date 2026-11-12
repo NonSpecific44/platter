@@ -43,6 +43,9 @@ class PlaybackService : MediaLibraryService() {
     fun newPlayer(context: Context, handleFocus: Boolean = true): ExoPlayer {
       builtBitPerfect = bitPerfect
       val renderers = DefaultRenderersFactory(context.applicationContext)
+        // Platter's own FFmpeg decoders first, so lossless files play the same on every device
+        // rather than depending on whatever decoders its maker included.
+        .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
         .setEnableAudioFloatOutput(bitPerfect)
         .setEnableAudioTrackPlaybackParams(true)
       return ExoPlayer.Builder(context.applicationContext, renderers)

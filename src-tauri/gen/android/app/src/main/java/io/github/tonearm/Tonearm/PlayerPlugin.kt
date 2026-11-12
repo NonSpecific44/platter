@@ -43,6 +43,10 @@ import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import org.json.JSONObject
+import android.util.Log
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 
 @InvokeArg
 class LoadArgs {
@@ -157,6 +161,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
   private fun attach(p: ExoPlayer) {
     attached?.removeListener(listener)
     p.addListener(listener)
+    p.addAnalyticsListener(decoderLog)
     attached = p
     applyEffects()
     applyVolume()
@@ -338,6 +343,14 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     outgoing?.release()
     outgoing = null
     applyVolume()
+  }
+
+  /** Which decoder each track uses, for checking that FFmpeg's are in use. */
+  @OptIn(UnstableApi::class)
+  private val decoderLog = object : AnalyticsListener {
+    override fun onAudioDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
+      Log.i("Platter", "audio decoder: $decoderName")
+    }
   }
 
   /** Starts [CrossfadeArgs.url] on a second player, ramps across, then releases the first. */

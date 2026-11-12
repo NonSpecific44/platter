@@ -54,6 +54,7 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 - Every server address is saved and checked at once, so moving between home and mobile data is quick. If the server stops answering, Platter moves to whichever address works and carries on.
 - Pull down on any page to refresh it.
 - Android 17 asks for permission to reach devices on your local network. Without it, Platter can only reach your server through its remote addresses and can't see other devices.
+- **Built-in lossless decoders:** FLAC, ALAC, MP3, AAC, Vorbis and Opus play through Platter's own FFmpeg decoders, so files play the same on every device rather than depending on its maker's decoders. WAV is read directly. (AIFF isn't supported by the Android player and plays as a converted copy.)
 - **Bit-perfect output** (Settings → Playback) for DAPs and hi-res DACs: 24-bit audio reaches the system untouched instead of being rounded to 16-bit, with the EQ, loudness levelling, crossfade and speed turned off.
 - A track that won't play as it is falls back to a copy converted by Plex. Hi-res files are converted on Plex's relay, which can't carry them.
 - Android 7 and newer, including older system WebViews.
@@ -154,6 +155,12 @@ rustup target add aarch64-linux-android armv7-linux-androideabi
 npx tauri android build --apk --target aarch64 armv7
 ```
 
+The Android app includes FFmpeg's audio decoders, built from source. Build them once (and again after changing FFmpeg or the decoder list) before the first Android build. This needs the SDK's `cmake;3.22.1` package:
+
+```bash
+packaging/build-ffmpeg.sh    # FFmpeg 6.0 into .build-tools/ffmpeg-src, for every Android ABI
+```
+
 Release builds are signed with the key described in `.android-signing/keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`). That folder is git-ignored. Keep the key safe: Android only installs an update if it's signed with the same key. Without it, Gradle produces an unsigned APK.
 
 ### Testing
@@ -176,4 +183,7 @@ Release builds are signed with the key described in `.android-signing/keystore.p
 
 ## License
 
-MIT
+MIT, apart from the parts below.
+
+- The Android app's audio decoder module (`src-tauri/gen/android/ffmpeg-decoder`) is ExoPlayer's FFmpeg extension from [androidx/media](https://github.com/androidx/media) 1.8.0, under the Apache License 2.0.
+- It's linked with [FFmpeg](https://ffmpeg.org) 6.0 (`libavcodec`, `libavutil`, `libswresample`), licensed under the [GNU LGPL 2.1 or later](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html). Only FFmpeg's LGPL parts are used, with nothing GPL or non-free. Its source is the `release/6.0` branch of https://git.ffmpeg.org/ffmpeg.git, and `packaging/build-ffmpeg.sh` rebuilds it exactly as the app uses it, so you can rebuild the app with a modified FFmpeg.

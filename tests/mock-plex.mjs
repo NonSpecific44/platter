@@ -2,6 +2,7 @@
 //   node tests/mock-plex.mjs [port]
 // Serves a small fake library, tone "audio" with Range support, and logs interesting requests.
 import http from "node:http";
+import fs from "node:fs";
 
 const port = Number(process.argv[2] ?? 32400);
 const artists = ["Massive Attack", "Aphex Twin", "Sigur Ros", "Boards of Canada", "Bonobo", "Burial", "Four Tet", "Portishead", "Radiohead", "Tycho"];
@@ -154,6 +155,16 @@ http
       // Plex's converted copy: the same tone stands in for the MP3.
       const converted = p.startsWith("/music/:/transcode/universal/start") && url.searchParams.get("path")?.match(/(\d+)$/);
       if (converted) console.log(`TRANSCODE ${converted[1]}`);
+      // Real files for some tracks (MOCK_FILES=1000=/path/a.flac,1001=/path/b.wav), for testing formats.
+      const files = Object.fromEntries((process.env.MOCK_FILES ?? "").split(",").filter(Boolean).map((x) => x.split("=")));
+      if (part && files[part[1]]) {
+        const d = fs.readFileSync(files[part[1]]);
+        const type = { flac: "audio/flac", m4a: "audio/mp4", wav: "audio/wav", aiff: "audio/aiff", mp3: "audio/mpeg" }[files[part[1]].split(".").pop()] ?? "application/octet-stream";
+        const range = /bytes=(\d+)-(\d*)/.exec(req.headers.range ?? "");
+        const start = range ? +range[1] : 0, end = range && range[2] ? +range[2] : d.length - 1;
+        res.writeHead(range ? 206 : 200, { "Content-Type": type, "Accept-Ranges": "bytes", "Content-Length": end - start + 1, ...(range ? { "Content-Range": `bytes ${start}-${end}/${d.length}` } : {}) });
+        return res.end(d.subarray(start, end + 1));
+      }
       // A 24-bit, 48 kHz file (MOCK_HIRES=1002), for testing hi-res output.
       if (part && (process.env.MOCK_HIRES ?? "").split(",").includes(part[1])) {
         const rate = 48000, n = rate * SECONDS, d = Buffer.alloc(44 + n * 3);
