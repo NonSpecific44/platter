@@ -6,6 +6,8 @@ mod desktop;
 #[cfg(desktop)]
 mod media;
 #[cfg(desktop)]
+mod placement;
+#[cfg(desktop)]
 mod player;
 #[cfg(desktop)]
 mod render;

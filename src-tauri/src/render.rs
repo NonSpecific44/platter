@@ -88,13 +88,9 @@ pub fn apply(window: &tauri::WebviewWindow) {
             *EFFECTIVE.lock().unwrap() = "even";
             return;
         }
-        // The web process reads its settings once at startup, so restart it.
-        let uri = view.uri();
+        // The web process reads its settings once at startup, so restart it. The window opens on
+        // a blank page (tauri.linux.conf.json), so this happens before the app loads, not after.
         view.terminate_web_process();
-        match uri {
-            Some(uri) => view.load_uri(&uri),
-            None => view.reload(),
-        }
     });
 }
 

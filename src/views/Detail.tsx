@@ -5,7 +5,7 @@ import { player } from "../player";
 import { fmtDuration, openMenu, sectionKey, server, toast, useNav } from "../store";
 import { albumMenu, confirmDialog, invalidate, playArtist, prompt, ratingOf, setLoved, trackRadio, useData, usePlaylists, useRatings } from "../actions";
 import { AlbumCard, Cover, ErrorBox, Loading, Shelf, TrackList } from "../components/common";
-import { Mix, getMix, periodOf } from "../mixes";
+import { MIX_LABEL, Mix, MixId, getMix, isMixId, periodOf } from "../mixes";
 import { MixCover } from "../components/MixCover";
 
 function Hero({ thumb, round, kicker, title, children, art, mix, mixData }: {
@@ -16,7 +16,7 @@ function Hero({ thumb, round, kicker, title, children, art, mix, mixData }: {
   children?: React.ReactNode;
   art?: string;
   /** One of Platter's own mixes, which has a drawn cover instead of artwork. */
-  mix?: Mix["id"];
+  mix?: MixId;
   mixData?: Mix;
 }) {
   const bg = art ? server().imageUrl(art, 1200) : undefined;
@@ -229,14 +229,13 @@ async function lovedTracks(): Promise<Track[]> {
   return p.items.map(toTrack);
 }
 
-const isMixId = (id: string): id is Mix["id"] => id === "daylist" || id === "suggestions";
 
 export function PlaylistView({ id }: { id: string }) {
   const isLoved = id === "loved";
   const isMix = isMixId(id);
   const virtual = isLoved || isMix;
   const [fresh, setFresh] = useState(0);
-  const mix = useData(isMix ? `mix:${id}:${periodOf(id)}:${fresh}` : null, () => getMix(id as Mix["id"], fresh > 0));
+  const mix = useData(isMix ? `mix:${id}:${periodOf(id)}:${fresh}` : null, () => getMix(id as MixId, fresh > 0));
   const meta = useData(virtual ? null : `playlistMeta:${id}`, () => server().playlist(id));
   const listed = useData(isMix ? null : `playlist:${id}`, () => (isLoved ? lovedTracks() : server().playlistTracks(id)));
   const tracks = isMix ? { data: mix.data?.tracks, error: mix.error, loading: mix.loading, reload: mix.reload } : listed;
@@ -249,7 +248,7 @@ export function PlaylistView({ id }: { id: string }) {
   }, [list, q]);
 
   if (tracks.error) return <ErrorBox error={tracks.error} retry={tracks.reload} />;
-  const title = isLoved ? "Loved tracks" : isMix ? mix.data?.title ?? (id === "daylist" ? "daylist" : "Suggestions") : meta.data?.title ?? "Playlist";
+  const title = isLoved ? "Loved tracks" : isMix ? mix.data?.title ?? MIX_LABEL[id] : meta.data?.title ?? "Playlist";
   const smart = virtual || meta.data?.smart;
   const total = list.reduce((s, x) => s + x.duration, 0);
 

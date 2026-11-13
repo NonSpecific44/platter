@@ -32,7 +32,7 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 
 **Autoplay and mixes**
 - When the queue runs out, Platter keeps going with similar music. It uses Plex's sonic analysis when available, then artists with a similar sound (from MusicBrainz genre tags, learnt in the background), then Plex's similar artists, then albums in the same styles and genres. Random tracks are only a last resort. Turn it off in Settings → Playback.
-- **Made for you** on Home: a **daylist** built from what you play at this time of day, renamed and remade through the day, and **Suggestions**: music you haven't heard much, near what you play most, remade daily. Each gets its own generated cover.
+- **Made for you** on Home: a **daylist** built from what you play at this time of day, renamed and remade through the day, and **Suggestions**: music you haven't heard much, near what you play most, remade daily, plus **Daily Mix 1–3** (one style each), **On Repeat**, **Repeat Rewind** and **New for you** (recently added music from artists you like, weekly). Each gets its own generated cover.
 
 **Devices (like Spotify Connect)**
 - Every Platter on your account shows what your other devices are playing, with live progress. A "Listening on …" bar appears when music is playing somewhere else.

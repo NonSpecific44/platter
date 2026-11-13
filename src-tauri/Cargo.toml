@@ -1,6 +1,6 @@
 [package]
 name = "platter"
-version = "0.3.11"
+version = "0.3.12"
 description = "A Plex music player for the Linux desktop"
 edition = "2021"
 license = "MIT"

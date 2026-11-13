@@ -300,7 +300,12 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             handle_cli(app, &args);
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Only the size is remembered; placement.rs keeps it on the main screen and not maximized.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(tauri_plugin_window_state::StateFlags::SIZE)
+                .build(),
+        )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
@@ -311,6 +316,13 @@ pub fn run() {
             crate::remote::start(handle.clone());
             if let Some(window) = app.get_webview_window("main") {
                 render::apply(&window);
+                crate::placement::place(&window);
+                // Only now the app itself, once rendering is set up (the window starts blank).
+                let url = if tauri::is_dev() { app.config().build.dev_url.clone() } else { None };
+                let url = url.unwrap_or_else(|| "tauri://localhost".parse().expect("app url"));
+                if let Err(e) = window.navigate(url) {
+                    log_startup_failure(&format!("Couldn't open the app page: {e}"));
+                }
             }
             let player = Player::new(handle.clone()).map_err(|e| {
                 let message = format!("Couldn't start the audio engine (mpv): {e}");

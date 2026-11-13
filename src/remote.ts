@@ -47,7 +47,13 @@ export interface Device {
 export type Snapshot = Pick<
   ReturnType<typeof usePlayer.getState>,
   "queue" | "index" | "position" | "duration" | "paused" | "loaded" | "buffering" | "volume" | "muted" | "shuffle" | "repeat" | "stopAfter"
-> & { version: number; playingSince: number; queueVersion: number };
+> & {
+  version: number;
+  playingSince: number;
+  queueVersion: number;
+  /** Set while this device only shows and controls another one, which is where the music is. */
+  mirroring?: string;
+};
 
 /** Another device, as last heard from (directly, or through the Plex server). */
 export interface Peer {
@@ -91,7 +97,7 @@ let playingSince = 0;
 let queueVersion = 0;
 
 function signature(s: ReturnType<typeof usePlayer.getState>) {
-  return [s.queue.map((q) => q.uid).join(","), s.index, s.paused, s.loaded, s.buffering, s.volume, s.muted, s.shuffle, s.repeat, s.stopAfter, Math.round(s.duration)].join("|");
+  return [playerFlags.remote ? useRemote.getState().target?.clientId : "", s.queue.map((q) => q.uid).join(","), s.index, s.paused, s.loaded, s.buffering, s.volume, s.muted, s.shuffle, s.repeat, s.stopAfter, Math.round(s.duration)].join("|");
 }
 
 function watchState() {
@@ -127,6 +133,27 @@ function waitForChange(since: number, ms: number) {
 
 function snapshot(): Snapshot {
   const s = usePlayer.getState();
+  const target = useRemote.getState().target;
+  // Showing another device's music isn't playing it: report this device as idle, as Spotify does.
+  if (playerFlags.remote && target)
+    return {
+      queue: [],
+      index: 0,
+      position: 0,
+      duration: 0,
+      paused: true,
+      loaded: false,
+      buffering: false,
+      volume: s.volume,
+      muted: s.muted,
+      shuffle: false,
+      repeat: "off",
+      stopAfter: false,
+      version,
+      playingSince: 0,
+      queueVersion,
+      mirroring: target.clientId,
+    };
   return {
     queue: s.queue,
     index: s.index,
@@ -174,7 +201,7 @@ function timelineXml() {
   const s = usePlayer.getState();
   const t = currentTrack();
   const info = useSession.getState().server;
-  const state = !s.loaded || !t ? "stopped" : s.buffering ? "buffering" : s.paused ? "paused" : "playing";
+  const state = !s.loaded || !t || playerFlags.remote ? "stopped" : s.buffering ? "buffering" : s.paused ? "paused" : "playing";
   let host: URL | null = null;
   try {
     host = info ? new URL(info.uri) : null;
@@ -224,12 +251,12 @@ async function playMedia(q: Record<string, string>) {
     const tracks = items.map(toTrack);
     const sel = items.findIndex((m) => String(m.playQueueItemID) === String(c.playQueueSelectedItemID));
     const byKey = tracks.findIndex((t) => q.key?.endsWith(`/${t.ratingKey}`));
-    return local.playTracks(tracks, sel >= 0 ? sel : Math.max(0, byKey), { at, shuffle: false });
+    return act("playTracks", [tracks, sel >= 0 ? sel : Math.max(0, byKey), { at, shuffle: false }]);
   }
   if (q.key) {
     const m = await server().container(q.key);
     const tracks = (m.Metadata ?? []).map(toTrack);
-    return local.playTracks(tracks, 0, { at, shuffle: false });
+    return act("playTracks", [tracks, 0, { at, shuffle: false }]);
   }
 }
 
@@ -277,7 +304,7 @@ async function route(r: IncomingRequest): Promise<{ status: number; contentType:
     if (p === "/tonearm/call") {
       const { method, args } = JSON.parse(r.body || "{}") as { method: Routed; args: unknown[] };
       if (!ROUTED.includes(method)) return { status: 400, contentType: "text/plain", body: "unknown method" };
-      await local[method](...(args ?? []));
+      await act(method, args ?? []);
       return { status: 200, contentType: "application/json", body: "{}" };
     }
     return { status: 404, contentType: "text/plain", body: "not found" };
@@ -307,31 +334,31 @@ async function route(r: IncomingRequest): Promise<{ status: number; contentType:
     case "/player/timeline/unsubscribe":
       return ok();
     case "/player/playback/play":
-      await local.play();
+      await act("play");
       return ok();
     case "/player/playback/pause":
-      await local.pause();
+      await act("pause");
       return ok();
     case "/player/playback/playPause":
-      await local.toggle();
+      await act("toggle");
       return ok();
     case "/player/playback/stop":
-      await local.stop();
+      await act("stop");
       return ok();
     case "/player/playback/skipNext":
-      await local.next();
+      await act("next");
       return ok();
     case "/player/playback/skipPrevious":
-      await local.previous();
+      await act("previous");
       return ok();
     case "/player/playback/stepForward":
-      await local.seekBy(15);
+      await act("seekBy", [15]);
       return ok();
     case "/player/playback/stepBack":
-      await local.seekBy(-15);
+      await act("seekBy", [-15]);
       return ok();
     case "/player/playback/seekTo":
-      await local.seek(Number(q.offset ?? 0) / 1000);
+      await act("seek", [Number(q.offset ?? 0) / 1000]);
       return ok();
     case "/player/playback/skipTo": {
       const i = usePlayer.getState().queue.findIndex((x) => q.key?.endsWith(`/${x.track.ratingKey}`));
@@ -339,8 +366,8 @@ async function route(r: IncomingRequest): Promise<{ status: number; contentType:
       return ok();
     }
     case "/player/playback/setParameters":
-      if (q.volume !== undefined) await local.setVolume(Number(q.volume));
-      if (q.shuffle !== undefined) await local.setShuffle(q.shuffle === "1");
+      if (q.volume !== undefined) await act("setVolume", [Number(q.volume)]);
+      if (q.shuffle !== undefined) await act("setShuffle", [q.shuffle === "1"]);
       if (q.repeat !== undefined) {
         const want = q.repeat === "1" ? "one" : q.repeat === "2" ? "all" : "off";
         for (let i = 0; i < 3 && usePlayer.getState().repeat !== want; i++) await local.cycleRepeat();
@@ -410,6 +437,8 @@ export function setOutputName(name: string) {
 interface Command {
   method: Routed;
   args: unknown[];
+  /** How many devices have passed it on; stops a command going round in circles. */
+  hops?: number;
 }
 
 interface SyncMessage {
@@ -475,7 +504,7 @@ function emptyPeer(d: Device): Peer {
 /** Our state for a peer, without the queue if it already has this version of it. */
 function stateFor(have: number | undefined): SyncMessage["state"] {
   const { queue, ...rest } = snapshot();
-  return have === queueVersion ? rest : { ...rest, queue };
+  return have === queueVersion && !rest.mirroring ? rest : { ...rest, queue };
 }
 
 const queueVersionOf = (id: string) => peerQueueVersions.get(id);
@@ -501,10 +530,23 @@ function receivePeer(d: Device, incoming: SyncMessage["state"] | null, inbound: 
   if (state) onPeerState(d.clientId);
 }
 
+/**
+ * Carries out a command from another device. If this device is only showing another one, the
+ * command is meant for the music, so it goes on to that device instead of starting playback here.
+ */
+async function act(method: Routed, args: unknown[] = [], hops = 0) {
+  const target = useRemote.getState().target;
+  if (target && playerFlags.remote) {
+    if (hops < 2) forward(target.clientId, { method, args, hops: hops + 1 });
+    return;
+  }
+  return local[method](...args);
+}
+
 async function runCommand(c: Command) {
   if (!ROUTED.includes(c.method)) return;
   try {
-    await local[c.method](...(c.args ?? []));
+    await act(c.method, c.args ?? [], c.hops ?? 0);
   } catch (e) {
     console.warn("remote command", c.method, e);
   }
@@ -738,6 +780,7 @@ const FRESH_MS = 15_000;
 export function nowPlaying(p: Peer): NowPlaying | null {
   const now = Date.now();
   const st = p.state && now - p.stateAt < FRESH_MS ? p.state : null;
+  if (st?.mirroring) return null;
   if (st?.loaded && st.queue[st.index]) {
     const playing = !st.paused && !st.buffering;
     const position = Math.min(st.duration || Infinity, st.position + (playing ? (now - p.stateAt) / 1000 : 0));
@@ -769,7 +812,11 @@ export function nowPlaying(p: Peer): NowPlaying | null {
 
 /** Send a command to a device: directly when we can reach it, otherwise via its next sync. */
 export function sendCommand(id: string, method: Routed, args: unknown[] = []) {
-  outbox.set(id, [...(outbox.get(id) ?? []), { method, args }]);
+  forward(id, { method, args });
+}
+
+function forward(id: string, c: Command) {
+  outbox.set(id, [...(outbox.get(id) ?? []), c]);
   syncSoon();
 }
 
@@ -787,6 +834,9 @@ export async function playHere(id: string) {
 
 /** Send this device's music to another Platter and control it from here. */
 export async function playThere(id: string) {
+  const via = useRemote.getState().peers[id]?.state?.mirroring;
+  // Sending music to a device that shows this one means sending it to that device's own speakers.
+  if (via && useRemote.getState().target?.clientId === id) await disconnect();
   const p = useRemote.getState().peers[id];
   if (!p) return;
   const s = usePlayer.getState();
@@ -831,6 +881,9 @@ let declined: { id: string; since: number } | null = null;
 /** Mirror another device here: the player bar, queue and controls all act on it. */
 export async function control(id: string) {
   declined = null;
+  const via = useRemote.getState().peers[id]?.state?.mirroring;
+  if (via && via !== clientId() && useRemote.getState().peers[via]) id = via;
+  else if (via === clientId()) return; // It's showing this device: the music is already here.
   const p = useRemote.getState().peers[id];
   if (!p || useRemote.getState().target?.clientId === id) return;
   if (useRemote.getState().target) await disconnect();
@@ -887,7 +940,13 @@ function followPlaying() {
   const { target, peers } = useRemote.getState();
   if (target) {
     const p = peers[target.clientId];
-    if (!p || Date.now() - p.lastSeen > 60_000) void disconnect();
+    if (!p || Date.now() - p.lastSeen > 60_000) return void disconnect();
+    // The shown device paused and another started playing: show that one instead.
+    const shown = nowPlaying(p);
+    if (!shown?.playing) {
+      const other = Object.values(peers).find((q) => q.device.clientId !== target.clientId && q.state && !q.state.mirroring && nowPlaying(q)?.playing && nowPlaying(q)?.controllable);
+      if (other) void control(other.device.clientId);
+    }
     return;
   }
   if (playingHere()) return;

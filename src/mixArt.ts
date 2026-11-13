@@ -1,10 +1,11 @@
 // Covers for the Made for you mixes, drawn here in the style of Spotify's:
 //   daylist: soft, grainy colour that follows the time of day, nudged by the mix's sound, with
 //     "daylist" and its name in lower case.
-//   Suggestions: a toned photo of an artist in the mix, with the name on a coloured band.
+//   The rest (Suggestions, Daily Mixes, On Repeat, Repeat Rewind, New for you): a two-tone photo of
+//     an artist in the mix, with the mix's name on a coloured band.
 // Each cover is drawn once per mix and kept, so it doesn't change until the mix does.
 import { fetch } from "@tauri-apps/plugin-http";
-import type { Mix } from "./mixes";
+import { MIX_LABEL, type Mix, type MixId } from "./mixes";
 import { loadJson, server } from "./store";
 
 const SIZE = 640;
@@ -19,7 +20,16 @@ const DAY_COLOURS: Record<string, string[]> = {
   night: ["#3a0ca3", "#7209b7", "#4361ee", "#4cc9f0"],
   "late night": ["#10002b", "#3c096c", "#5a189a", "#c77dff"],
 };
-/** Daily Mix-style colours for Suggestions. */
+/** Fixed colours, so each of these is recognisable at a glance. */
+const FIXED: Partial<Record<MixId, string>> = {
+  daily1: "#e8115b",
+  daily2: "#148a08",
+  daily3: "#509bf5",
+  onrepeat: "#ff6437",
+  rewind: "#1e3264",
+  newforyou: "#8d67ab",
+};
+/** Daily Mix-style colours for Suggestions, which changes colour each day. */
 const MIX_COLOURS = ["#e8115b", "#1e3264", "#8d67ab", "#148a08", "#509bf5", "#ff6437", "#ba5d07", "#7358ff", "#0d73ec", "#af2896"];
 
 function hash(s: string) {
@@ -143,8 +153,10 @@ async function artistPhoto(mix: Mix): Promise<ImageBitmap | null> {
   return null;
 }
 
-async function drawSuggestions(ctx: CanvasRenderingContext2D, mix: Mix) {
-  const colour = MIX_COLOURS[hash(mix.period + mix.tracks[0]?.ratingKey) % MIX_COLOURS.length];
+async function drawBanded(ctx: CanvasRenderingContext2D, mix: Mix) {
+  // Suggestions changes colour daily, never to one the other mixes always have.
+  const free = MIX_COLOURS.filter((c) => !Object.values(FIXED).includes(c));
+  const colour = FIXED[mix.id] ?? free[hash(mix.period + mix.tracks[0]?.ratingKey) % free.length];
   const base = rgb(colour);
   // Two tones of the mix's colour: shadows deep, highlights pale.
   const deep = mixRgb(base, [0, 0, 0], 0.65);
@@ -171,14 +183,18 @@ async function drawSuggestions(ctx: CanvasRenderingContext2D, mix: Mix) {
   ctx.fillStyle = colour;
   ctx.fillRect(0, SIZE - band, SIZE, band);
   ctx.fillStyle = "#fff";
-  ctx.font = `700 64px ${FONT}`;
-  ctx.fillText("Suggestions", 40, SIZE - band / 2 + 22);
+  const label = MIX_LABEL[mix.id];
+  // Shrunk to fit if a name is long.
+  let px = 64;
+  do ctx.font = `700 ${px}px ${FONT}`;
+  while (ctx.measureText(label).width > SIZE - 80 && (px -= 4) > 30);
+  ctx.fillText(label, 40, SIZE - band / 2 + px / 3);
   ctx.font = `600 26px ${FONT}`;
   ctx.fillStyle = `rgb(${deep.join(",")})`;
   ctx.fillText("made for you", 40, 60);
 }
 
-const KEY = (id: Mix["id"]) => `tonearm.mixArt.${id}`;
+const KEY = (id: MixId) => `tonearm.mixArt.${id}`;
 const drawing = new Map<string, Promise<string>>();
 
 /** The cover for `mix` as an image URL, drawn the first time it's needed. */
@@ -194,7 +210,7 @@ export function mixArt(mix: Mix): Promise<string> {
       canvas.width = canvas.height = SIZE;
       const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
       if (mix.id === "daylist") drawDaylist(ctx, mix);
-      else await drawSuggestions(ctx, mix);
+      else await drawBanded(ctx, mix);
       const url = canvas.toDataURL("image/jpeg", 0.86);
       try {
         localStorage.setItem(KEY(mix.id), JSON.stringify({ stamp, url }));
@@ -209,4 +225,4 @@ export function mixArt(mix: Mix): Promise<string> {
 }
 
 /** The last cover drawn for a mix, if any, without drawing. */
-export const savedArt = (id: Mix["id"]) => loadJson<{ stamp: string; url: string } | null>(KEY(id), null)?.url ?? null;
+export const savedArt = (id: MixId) => loadJson<{ stamp: string; url: string } | null>(KEY(id), null)?.url ?? null;

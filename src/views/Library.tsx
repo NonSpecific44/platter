@@ -2,15 +2,32 @@ import { useMemo, useRef, useState } from "react";
 import { Heart, Plus, RefreshCw, Search, Shuffle, Sparkles } from "lucide-react";
 import { Album, Artist, Hub, Playlist, Track } from "../plex";
 import { player } from "../player";
-import { sectionKey, server, toast, useNav, useSession, View } from "../store";
+import { loadJson, sectionKey, server, toast, useNav, useSession, View } from "../store";
 import { ALBUM_SORTS, prompt, useData, usePaged, usePlaylists, invalidate } from "../actions";
 import { AlbumCard, ArtistCard, ErrorBox, Loading, PlaylistCard, Shelf, TrackList } from "../components/common";
 import { ItemRows, PageHead, RecentTiles } from "../components/Phone";
-import { Mix, getMix, periodOf } from "../mixes";
+import { MIX_IDS, MIX_LABEL, MixId, getMix, periodOf } from "../mixes";
 import { MixCover } from "../components/MixCover";
 import { useIsPhone } from "../platform";
 
 // ---- home ------------------------------------------------------------------------
+
+/** How long Rediscover keeps the same albums, across visits and restarts. */
+const REDISCOVER_MS = 60 * 60_000;
+
+/** Random albums for Rediscover, kept for an hour unless `fresh`. */
+async function rediscover(sec: string, fresh: boolean): Promise<Album[]> {
+  const key = `tonearm.rediscover.${sec}`;
+  const saved = loadJson<{ at: number; items: Album[] } | null>(key, null);
+  if (!fresh && saved?.items?.length && Date.now() - saved.at < REDISCOVER_MS) return saved.items;
+  const items = await server().randomAlbums(sec, 16);
+  try {
+    localStorage.setItem(key, JSON.stringify({ at: Date.now(), items }));
+  } catch {
+    /* shown anyway, just not kept */
+  }
+  return items;
+}
 
 function greeting() {
   const h = new Date().getHours();
@@ -21,14 +38,17 @@ export function Home() {
   const sec = sectionKey();
   const user = useSession((s) => s.user);
   const hubs = useData(`hubs:${sec}`, () => server().hubs(sec));
-  const random = useData(`random:${sec}`, () => server().randomAlbums(sec, 16));
+  // Only the refresh button asks for different albums; coming back to Home keeps them.
+  const freshRandom = useRef(false);
+  const random = useData(`random:${sec}`, () => rediscover(sec, freshRandom.current).finally(() => (freshRandom.current = false)));
   const go = useNav((s) => s.go);
   const phone = useIsPhone();
   const shelves = (
     <>
       <Shelf title="Made for you" complete>
-        <MixCard id="daylist" />
-        <MixCard id="suggestions" />
+        {MIX_IDS.map((id) => (
+          <MixCard key={id} id={id} />
+        ))}
       </Shelf>
       {hubs.data?.map((h) => (
         <Shelf key={h.hubIdentifier} title={h.title} complete={!h.more} onMore={() => go(hubView(h))}>
@@ -42,7 +62,14 @@ export function Home() {
           title="Rediscover"
           onMore={() => go({ kind: "shelf", title: "Rediscover", itemType: "album", path: `/library/sections/${sec}/all?type=9&sort=random` })}
           actions={
-            <button className="icon-btn shelf-action" title="Show different albums" onClick={random.reload}>
+            <button
+              className="icon-btn shelf-action"
+              title="Show different albums"
+              onClick={() => {
+                freshRandom.current = true;
+                random.reload();
+              }}
+            >
               <RefreshCw size={16} />
             </button>
           }
@@ -109,17 +136,26 @@ function TrackCard({ t }: { t: Track }) {
 }
 
 /** A playlist Platter makes for you (see mixes.ts). Made in the background when Home opens. */
-function MixCard({ id }: { id: Mix["id"] }) {
+function MixCard({ id }: { id: MixId }) {
   const go = useNav((s) => s.go);
   const mix = useData(`mix:${id}:${periodOf(id)}`, () => getMix(id));
-  const label = id === "daylist" ? "daylist" : "Suggestions";
+  const label = MIX_LABEL[id];
+  // The newer mixes need enough listening (or new music) to make; until then they stay out of the way.
+  const core = id === "daylist" || id === "suggestions";
+  if (!core && (mix.error || mix.data?.tracks.length === 0)) return null;
   return (
     <div className="card" onClick={() => go({ kind: "playlist", id })}>
       <div className="card-art">
         <MixCover id={id} mix={mix.data} />
       </div>
       <div className="card-title">{mix.data?.title ?? label}</div>
-      <div className="card-sub">{mix.error ? "Couldn't make it this time" : mix.data ? `${mix.data.tracks.length} tracks` : "Putting it together…"}</div>
+      <div className="card-sub">{mix.error
+          ? "Couldn't make it this time"
+          : mix.data
+            ? id.startsWith("daily")
+              ? mix.data.subtitle
+              : `${mix.data.tracks.length} tracks`
+            : "Putting it together…"}</div>
     </div>
   );
 }

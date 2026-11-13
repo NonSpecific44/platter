@@ -1,0 +1,16 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Platter",
+        "url": "about:blank",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 340,
+        "minHeight": 96,
+        "dragDropEnabled": false
+      }
+    ]
+  }
+}
