@@ -8,6 +8,7 @@ import { Tags, artistKey, blend, blendOf, capPerArtist, leadArtist, nearestArtis
 import { isExcluded, loadJson, sectionKey, server, useSession } from "./store";
 import { invoke } from "@tauri-apps/api/core";
 import { isAndroid } from "./platform";
+import { mixArt, savedArt } from "./mixArt";
 
 export interface Mix {
   id: "daylist" | "suggestions";
@@ -155,7 +156,8 @@ export function getMix(id: Mix["id"], fresh = false): Promise<Mix> {
         } catch {
           /* still shown, just made again next time */
         }
-        shareWithAuto();
+        // Its cover, then Android Auto gets both.
+        void mixArt(mix).catch(() => undefined).finally(shareWithAuto);
         return mix;
       })
       .finally(() => making.delete(id));
@@ -175,6 +177,8 @@ export function shareWithAuto() {
       label: m.id === "daylist" ? "daylist" : "Suggestions",
       title: m.title === "Suggestions" ? m.subtitle : m.title,
       thumb: m.tracks[0]?.thumb ?? "",
+      // The drawn cover as JPEG bytes (base64); Auto shows it without needing an address for it.
+      art: savedArt(m.id)?.split("base64,")[1] ?? "",
       keys: m.tracks.filter((t) => !t.ratingKey.startsWith("local")).map((t) => t.ratingKey),
     }));
   void invoke("auto_mixes", { json: JSON.stringify(list) }).catch(() => undefined);

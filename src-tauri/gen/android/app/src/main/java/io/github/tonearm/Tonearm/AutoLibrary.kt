@@ -109,14 +109,27 @@ class AutoLibrary(private val context: Context) : MediaLibrarySession.Callback {
     return Uri.parse("$base/photo/:/transcode?width=512&height=512&minSize=1&upscale=1&url=$q&X-Plex-Token=${cfg.token}")
   }
 
-  private fun folder(id: String, title: String, subtitle: String? = null, art: Uri? = null, type: Int = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, playable: Boolean = false): MediaItem =
+  /** The app's drawn mix cover, made small: browse results cross a size-limited binder. */
+  private fun smallCover(base64: String): ByteArray? {
+    val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+    val full = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+    val small = android.graphics.Bitmap.createScaledBitmap(full, 320, 320, true)
+    val out = java.io.ByteArrayOutputStream()
+    small.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+    if (small !== full) small.recycle()
+    full.recycle()
+    return out.toByteArray()
+  }
+
+  private fun folder(id: String, title: String, subtitle: String? = null, art: Uri? = null, type: Int = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, playable: Boolean = false, artData: ByteArray? = null): MediaItem =
     MediaItem.Builder()
       .setMediaId(id)
       .setMediaMetadata(
         MediaMetadata.Builder()
           .setTitle(title)
           .setSubtitle(subtitle)
-          .setArtworkUri(art)
+          .setArtworkUri(if (artData == null) art else null)
+          .setArtworkData(artData, if (artData == null) null else MediaMetadata.PICTURE_TYPE_FRONT_COVER)
           .setIsBrowsable(true)
           .setIsPlayable(playable)
           .setMediaType(type)
@@ -169,7 +182,8 @@ class AutoLibrary(private val context: Context) : MediaLibrarySession.Callback {
       id == "mixes" ->
         if (page > 0) emptyList()
         else mixes().map {
-          folder("mix:${it.getString("id")}", it.optString("label"), it.optString("title"), artwork(cfg, it.optString("thumb")), MediaMetadata.MEDIA_TYPE_PLAYLIST, playable = true)
+          val art = it.optString("art").takeIf { a -> a.isNotEmpty() }?.let { a -> runCatching { smallCover(a) }.getOrNull() }
+          folder("mix:${it.getString("id")}", it.optString("label"), it.optString("title"), artwork(cfg, it.optString("thumb")), MediaMetadata.MEDIA_TYPE_PLAYLIST, playable = true, artData = art)
         }
       id == "albums" ->
         metadata(get(cfg, "/library/sections/${cfg.section}/all?type=9&sort=addedAt:desc&$paging")).map {

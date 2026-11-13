@@ -3,7 +3,7 @@ pkgname=platter
 # Formerly "Tonearm".
 replaces=(tonearm)
 conflicts=(tonearm)
-pkgver=0.3.10
+pkgver=0.3.11
 pkgrel=1
 pkgdesc="A Plex music player for the Linux desktop"
 arch=('x86_64')

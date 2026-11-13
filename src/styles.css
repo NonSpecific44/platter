@@ -231,7 +231,8 @@ input[type="color"] { width: 44px; height: 30px; border: none; background: none;
 .phone-section .section-head h2, .phone-section-head h2 { margin: 0; }
 .shelf-filter { margin-bottom: 12px; }
 .phone-bar-idle { flex: 1; min-width: 0; padding-left: 12px; }
-.mix-art { display: flex; align-items: flex-end; padding: 12px; color: #fff; }
+.mix-art { position: relative; display: flex; align-items: flex-end; padding: 12px; color: #fff; }
+.mix-art > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .mix-art span { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.25); }
 .mix-daylist { background: linear-gradient(140deg, #ffb347, #ff6a3d 45%, #b4317a); }
 .mix-suggestions { background: linear-gradient(140deg, #27c3a0, #2c7a8f 50%, #2b3f8f); }

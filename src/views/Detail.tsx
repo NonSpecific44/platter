@@ -6,8 +6,9 @@ import { fmtDuration, openMenu, sectionKey, server, toast, useNav } from "../sto
 import { albumMenu, confirmDialog, invalidate, playArtist, prompt, ratingOf, setLoved, trackRadio, useData, usePlaylists, useRatings } from "../actions";
 import { AlbumCard, Cover, ErrorBox, Loading, Shelf, TrackList } from "../components/common";
 import { Mix, getMix, periodOf } from "../mixes";
+import { MixCover } from "../components/MixCover";
 
-function Hero({ thumb, round, kicker, title, children, art, mix }: {
+function Hero({ thumb, round, kicker, title, children, art, mix, mixData }: {
   thumb?: string;
   round?: boolean;
   kicker: string;
@@ -16,15 +17,14 @@ function Hero({ thumb, round, kicker, title, children, art, mix }: {
   art?: string;
   /** One of Platter's own mixes, which has a drawn cover instead of artwork. */
   mix?: Mix["id"];
+  mixData?: Mix;
 }) {
   const bg = art ? server().imageUrl(art, 1200) : undefined;
   return (
     <header className={`hero ${bg ? "has-art" : ""}`}>
       {bg && <div className="hero-bg" style={{ backgroundImage: `url("${bg}")` }} />}
       {mix ? (
-        <div className={`cover hero-cover mix-art mix-${mix}`}>
-          <span>{mix === "daylist" ? "daylist" : "Suggestions"}</span>
-        </div>
+        <MixCover id={mix} mix={mixData} className="hero-cover" />
       ) : (
         <Cover thumb={thumb} round={round} className="hero-cover" icon={round ? "artist" : "album"} />
       )}
@@ -273,7 +273,7 @@ export function PlaylistView({ id }: { id: string }) {
 
   return (
     <div className="view">
-      <Hero thumb={meta.data?.thumb} mix={isMix ? id : undefined} kicker={isMix ? (id === "daylist" ? "daylist" : "Made for you") : smart ? "Smart playlist" : "Playlist"} title={title}>
+      <Hero thumb={meta.data?.thumb} mix={isMix ? id : undefined} mixData={mix.data} kicker={isMix ? (id === "daylist" ? "daylist" : "Made for you") : smart ? "Smart playlist" : "Playlist"} title={title}>
         <div className="hero-sub dim">
           {list.length} tracks{total ? ` · ${fmtDuration(total)}` : ""}
         </div>

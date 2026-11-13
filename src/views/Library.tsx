@@ -7,6 +7,7 @@ import { ALBUM_SORTS, prompt, useData, usePaged, usePlaylists, invalidate } from
 import { AlbumCard, ArtistCard, ErrorBox, Loading, PlaylistCard, Shelf, TrackList } from "../components/common";
 import { ItemRows, PageHead, RecentTiles } from "../components/Phone";
 import { Mix, getMix, periodOf } from "../mixes";
+import { MixCover } from "../components/MixCover";
 import { useIsPhone } from "../platform";
 
 // ---- home ------------------------------------------------------------------------
@@ -115,9 +116,7 @@ function MixCard({ id }: { id: Mix["id"] }) {
   return (
     <div className="card" onClick={() => go({ kind: "playlist", id })}>
       <div className="card-art">
-        <div className={`cover mix-art mix-${id}`}>
-          <span>{label}</span>
-        </div>
+        <MixCover id={id} mix={mix.data} />
       </div>
       <div className="card-title">{mix.data?.title ?? label}</div>
       <div className="card-sub">{mix.error ? "Couldn't make it this time" : mix.data ? `${mix.data.tracks.length} tracks` : "Putting it together…"}</div>
