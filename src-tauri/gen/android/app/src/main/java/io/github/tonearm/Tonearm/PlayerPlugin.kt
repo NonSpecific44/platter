@@ -54,11 +54,14 @@ class LoadArgs {
   var next: String? = null
   var start: Double = 0.0
   var paused: Boolean = false
+  var gain: Double? = null
+  var nextGain: Double? = null
 }
 
 @InvokeArg
 class NextArgs {
   var next: String? = null
+  var nextGain: Double? = null
 }
 
 @InvokeArg
@@ -83,6 +86,7 @@ class CrossfadeArgs {
   lateinit var url: String
   var next: String? = null
   var seconds: Double = 6.0
+  var gain: Double? = null
 }
 
 @InvokeArg
@@ -214,6 +218,12 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
 
   private val listener = object : Player.Listener {
     override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
+      // The track's own loudness, straight away, rather than when the app next gets to run.
+      (item?.localConfiguration?.tag as? Double)?.let {
+        gainDb = it
+        applyEffects()
+        applyVolume()
+      }
       val uri = item?.localConfiguration?.uri?.toString() ?: return
       if (PlaybackService.nativeQueue) {
         // Android Auto started this queue while the app is open: the app takes it over.
@@ -364,7 +374,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
       old.clearMediaItems(keepCurrent = true)
       val next = PlaybackService.newPlayer(activity.applicationContext, handleFocus = false)
       next.volume = 0f
-      next.setMediaItem(item(args.url))
+      next.setMediaItem(item(args.url, args.gain))
       args.next?.let { next.addMediaItem(item(it)) }
       next.playWhenReady = true
       next.prepare()
@@ -548,7 +558,8 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     return if (rel.isEmpty()) root else "$root/$rel"
   }
 
-  private fun item(url: String) = MediaItem.Builder().setUri(Uri.parse(url)).setMediaId(url).build()
+  /** A track to play, carrying its loudness adjustment so it applies as soon as the track starts. */
+  private fun item(url: String, gain: Double? = null) = MediaItem.Builder().setUri(Uri.parse(url)).setMediaId(url).setTag(gain).build()
 
   private fun onMain(invoke: Invoke, block: () -> Unit) {
     main.post {
@@ -569,8 +580,8 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
       PlaybackService.nativeQueue = false
       if (PlaybackService.builtBitPerfect != PlaybackService.bitPerfect) rebuildPlayer()
       val p = player
-      val items = mutableListOf(item(args.url))
-      args.next?.let { items.add(item(it)) }
+      val items = mutableListOf(item(args.url, args.gain))
+      args.next?.let { items.add(item(it, args.nextGain)) }
       p.setMediaItems(items, 0, (args.start * 1000).toLong())
       p.playWhenReady = !args.paused
       p.prepare()
@@ -586,7 +597,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
       val p = player
       val cur = p.currentMediaItemIndex
       if (p.mediaItemCount > cur + 1) p.removeMediaItems(cur + 1, p.mediaItemCount)
-      args.next?.let { p.addMediaItem(item(it)) }
+      args.next?.let { p.addMediaItem(item(it, args.nextGain)) }
     }
   }
 

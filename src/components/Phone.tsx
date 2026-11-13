@@ -1,6 +1,7 @@
 // Phone layout: bottom tabs, a compact mini player and full-screen Now Playing, in the spirit of
 // the big streaming apps. Used on Android and in very narrow windows.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { create } from "zustand";
 import {
   ChevronDown, ChevronRight, Heart, Home, Inbox, Library, ListMusic, Mic2, Pause, Play, RefreshCw, Search, Settings, X,
 } from "lucide-react";
@@ -756,23 +757,30 @@ export function ItemRows({ type, items }: { type: string; items: Hub["items"] })
 
 // ---- search --------------------------------------------------------------------------------
 
+/** The last search and its results, so going back from an album finds them still there. */
+const useLastSearch = create<{ q: string; hubs: Hub[]; for: string }>(() => ({ q: "", hubs: [], for: "" }));
+
 export function SearchView() {
   const go = useNav((s) => s.go);
-  const [q, setQ] = useState("");
-  const [hubs, setHubs] = useState<Hub[]>([]);
+  const q = useLastSearch((s) => s.q);
+  const hubs = useLastSearch((s) => s.hubs);
+  const setQ = (v: string) => useLastSearch.setState({ q: v });
+  const setHubs = (h: Hub[], term: string) => useLastSearch.setState({ hubs: h, for: term });
   const [loading, setLoading] = useState(false);
   useEffect(() => {
     const term = q.trim();
     if (term.length < 2) {
-      setHubs([]);
+      setHubs([], "");
       return;
     }
+    // Back from a result: these are already the answers.
+    if (useLastSearch.getState().for === term) return;
     setLoading(true);
     const t = setTimeout(async () => {
       try {
-        setHubs(await server().search(sectionKey(), term));
+        setHubs(await server().search(sectionKey(), term), term);
       } catch {
-        setHubs([]);
+        setHubs([], "");
       }
       setLoading(false);
     }, 220);
@@ -785,7 +793,8 @@ export function SearchView() {
       <PageHead title="Search" />
       <div className="phone-search">
         <Search size={20} />
-        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Artists, songs or albums" enterKeyHint="search" />
+        {/* Back from a result, the keyboard would only cover the results. */}
+        <input autoFocus={!q} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Artists, songs or albums" enterKeyHint="search" />
         {q && (
           <button className="icon-btn" onClick={() => setQ("")} title="Clear">
             <X size={18} />

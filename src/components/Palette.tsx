@@ -100,11 +100,12 @@ export function Palette() {
   const [loading, setLoading] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
+  // The last search stays, selected, so typing replaces it and Enter goes back to its results.
+  const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (palette) {
-      setQ("");
-      setResults([]);
       setSel(0);
+      input.current?.select();
     }
   }, [palette]);
 
@@ -150,6 +151,7 @@ export function Palette() {
           <Search size={18} />
           <input
             autoFocus
+            ref={input}
             placeholder="Search artists, albums, tracks… or type a command"
             value={q}
             onChange={(e) => setQ(e.target.value)}

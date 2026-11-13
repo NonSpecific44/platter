@@ -15,7 +15,7 @@ const artist = (i) => ({ type: "artist", ratingKey: String(10 + i), title: artis
 const track = (i) => ({
   type: "track", ratingKey: String(1000 + i), title: titles[i % 10] + (i >= 10 ? ` ${i}` : ""), grandparentTitle: artists[i % 10], grandparentRatingKey: String(10 + (i % 10)),
   parentTitle: albumNames[i % 10], parentRatingKey: String(100 + (i % 10)), parentThumb: `/thumb/${i % 10}`, duration: SECONDS * 1000, index: (i % 10) + 1, parentIndex: 1, ratingCount: 1000 - i,
-  Media: [{ audioCodec: i % 2 ? "mp3" : "flac", bitrate: 900, Part: [{ key: `/library/parts/${1000 + i}/file.wav`, Stream: [{ streamType: 2, id: 5000 + i, gain: "-6.5", albumGain: "-5" }] }] }],
+  Media: [{ audioCodec: i % 2 ? "mp3" : "flac", bitrate: 900, Part: [{ key: `/library/parts/${1000 + i}/file.wav`, Stream: [{ streamType: 2, id: 5000 + i, gain: String(-12 + (i % 10) * 2), albumGain: String(-12 + (i % 10) * 2) }] }] }],
 });
 const mc = (o) => ({ MediaContainer: o });
 

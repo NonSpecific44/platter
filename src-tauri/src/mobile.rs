@@ -24,13 +24,13 @@ fn call(n: &Native, method: &str, args: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn player_load(n: State<Native>, url: String, next: Option<String>, start: f64, paused: bool) -> Result<(), String> {
-    call(&n, "load", json!({ "url": url, "next": next, "start": start, "paused": paused })).map(|_| ())
+fn player_load(n: State<Native>, url: String, next: Option<String>, start: f64, paused: bool, gain: Option<f64>, next_gain: Option<f64>) -> Result<(), String> {
+    call(&n, "load", json!({ "url": url, "next": next, "start": start, "paused": paused, "gain": gain, "nextGain": next_gain })).map(|_| ())
 }
 
 #[tauri::command]
-fn player_set_next(n: State<Native>, next: Option<String>) -> Result<(), String> {
-    call(&n, "setNext", json!({ "next": next })).map(|_| ())
+fn player_set_next(n: State<Native>, next: Option<String>, next_gain: Option<f64>) -> Result<(), String> {
+    call(&n, "setNext", json!({ "next": next, "nextGain": next_gain })).map(|_| ())
 }
 
 #[tauri::command]
@@ -92,8 +92,8 @@ fn media_volume(volume: f64) {
 }
 
 #[tauri::command]
-fn player_crossfade(n: State<Native>, url: String, next: Option<String>, seconds: f64) -> Result<(), String> {
-    call(&n, "crossfade", json!({ "url": url, "next": next, "seconds": seconds })).map(|_| ())
+fn player_crossfade(n: State<Native>, url: String, next: Option<String>, seconds: f64, gain: Option<f64>) -> Result<(), String> {
+    call(&n, "crossfade", json!({ "url": url, "next": next, "seconds": seconds, "gain": gain })).map(|_| ())
 }
 
 fn value_of(v: Value) -> String {

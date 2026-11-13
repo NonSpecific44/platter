@@ -17,6 +17,8 @@ import { EQ_BANDS, fmtTime, isExcluded, loadJson, persist, sectionKey, server, t
 export interface QItem {
   uid: string;
   track: Track;
+  /** Added by Autoplay; tracks you add go before these. */
+  auto?: boolean;
 }
 
 type Repeat = "off" | "all" | "one";
@@ -162,7 +164,21 @@ async function syncNext() {
   if (!item && nextUrl === null) return;
   nextUid = item?.uid ?? null;
   nextUrl = item ? urlFor(item.track) : null;
-  await call("player_set_next", { next: nextUrl });
+  const nextGain = item ? await gainOf(item.track) : 0;
+  await call("player_set_next", { next: nextUrl, nextGain });
+}
+
+/**
+ * The loudness adjustment (dB) for `t`, sent along with the track so the Android player applies it
+ * the moment the track starts. Otherwise it would wait for the app, which Android may have paused
+ * while the phone is locked, and the volume would jump when it's unlocked. 0 when unknown.
+ */
+async function gainOf(t: Track): Promise<number> {
+  const s = useSettings.getState();
+  if (s.replaygain === "no" || s.replaygain === "dynamic" || s.bitPerfect) return 0;
+  const g = await Promise.race([plexGain(t), new Promise<null>((r) => setTimeout(() => r(null), 2000))]);
+  const db = s.replaygain === "album" ? g?.album ?? g?.track : g?.track ?? g?.album;
+  return db === undefined ? 0 : Math.max(-30, Math.min(12, db + s.replaygainPreamp));
 }
 
 /** Long tracks (mixes, live sets, audiobooks) pick up where any Plex player left them. */
@@ -185,7 +201,8 @@ async function load(index: number, start = 0, paused = false) {
   nextUrl = nItem ? urlFor(nItem.track) : null;
   expectingPlayback = true;
   await setProp("loop-file", get().repeat === "one" ? "inf" : "no");
-  await call("player_load", { url: currentUrl, next: nextUrl, start, paused });
+  const [gain, nextGain] = await Promise.all([gainOf(item.track), ni === null ? 0 : gainOf(get().queue[ni].track)]);
+  await call("player_load", { url: currentUrl, next: nextUrl, start, paused, gain, nextGain });
   trackStarted();
 }
 
@@ -251,7 +268,11 @@ function maybeCrossfade(b: BackendState) {
   expectingPlayback = true;
   set({ index: ni!, position: 0, duration: nextItem.track.duration / 1000 });
   fadeStarting = true;
-  void call("player_crossfade", { url, next: null, seconds: Math.min(s.crossfadeSeconds, remaining) }).then(() => {
+  // The gain is normally known already: it was looked up when this track was queued as next.
+  const seconds = Math.min(s.crossfadeSeconds, remaining);
+  void gainOf(nextItem.track)
+    .then((gain) => call("player_crossfade", { url, next: null, seconds, gain }))
+    .then(() => {
     // Reports from the outgoing track may still be on their way; give them a moment to land.
     setTimeout(() => (fadeStarting = false), 400);
     set({ position: 0 });
@@ -331,7 +352,7 @@ async function maybeAutoplay() {
     const tracks = await similarTracks(seeds, exclude, 25);
     // Give up if the queue changed while we were looking.
     if (!tracks.length || get().queue.length !== s.queue.length || get().index !== s.index) return;
-    const added = items(tracks);
+    const added = items(tracks).map((i) => ({ ...i, auto: true }));
     set((st) => ({ queue: [...st.queue, ...added], original: st.original ? [...st.original, ...added] : null }));
     if (!autoplayAnnounced) {
       autoplayAnnounced = true;
@@ -592,7 +613,12 @@ export const player = {
       return;
     }
     const add = items(tracks);
-    set((s) => ({ queue: [...s.queue, ...add], original: s.original ? [...s.original, ...add] : null }));
+    // After anything else you've queued, but before Autoplay's picks.
+    const beforeAuto = (q: QItem[], from: number) => {
+      const i = q.findIndex((x, j) => j > from && x.auto);
+      return i < 0 ? [...q, ...add] : [...q.slice(0, i), ...add, ...q.slice(i)];
+    };
+    set((s) => ({ queue: beforeAuto(s.queue, s.index), original: s.original ? beforeAuto(s.original, -1) : null }));
     toast(tracks.length === 1 ? `Added “${tracks[0].title}” to the queue` : `Added ${tracks.length} tracks to the queue`);
     void syncNext();
   },

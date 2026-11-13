@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, Fragment } from "react";
 import { GripVertical, ListPlus, Mic2, Trash2, X } from "lucide-react";
 import { player, usePlayer, QItem } from "../player";
 import { activeLine, getLyrics, Lyrics } from "../lyrics";
@@ -85,8 +85,14 @@ export function QueueList({ limit }: { limit?: number }) {
         </span>
       </div>
       {upcoming.map((item, k) => (
-        <QueueRow
-          key={item.uid}
+        <Fragment key={item.uid}>
+          {item.auto && !upcoming[k - 1]?.auto && (
+            <div className="q-label">
+              Autoplay
+              <span className="dim">similar music, after anything you add</span>
+            </div>
+          )}
+          <QueueRow
           item={item}
           i={index + 1 + k}
           onDragStart={(i) => (dragFrom.current = i)}
@@ -94,7 +100,8 @@ export function QueueList({ limit }: { limit?: number }) {
             if (dragFrom.current !== null) player.move(dragFrom.current, to);
             dragFrom.current = null;
           }}
-        />
+          />
+        </Fragment>
       ))}
       {limit && queue.length - index - 1 > limit && (
         <button className="link pad" onClick={() => useNav.getState().go({ kind: "queue" })}>

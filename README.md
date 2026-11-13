@@ -11,7 +11,7 @@ A Plex music player for the Linux desktop and Android. Each device can control t
 **Playback**
 - Gapless playback, ReplayGain (track/album) with pre-amp, 10-band EQ with presets, playback speed, output device picker (desktop, via libmpv)
 - Native ExoPlayer playback on Android, with background playback, a media notification, lock-screen controls and headset buttons
-- Queue with drag-and-drop, play next / add to queue, undo, smart shuffle (no back-to-back artists), repeat, stop after current track, and a sleep timer that fades out
+- Queue with drag-and-drop, play next / add to queue (ahead of anything Autoplay added), undo, smart shuffle (no back-to-back artists), repeat, stop after current track, and a sleep timer that fades out
 - Optional transcoding for slow or remote connections
 
 **Music on your device**
